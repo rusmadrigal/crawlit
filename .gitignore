@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Env and secrets
+.env
+.env.local
+.env.production
+.dev.vars
+
+# Build and cache
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+
+# IDE and OS
+.DS_Store
+.idea/
+*.log
+.logs/
+
+# Vercel
+.vercel
