@@ -2,6 +2,16 @@
 
 CrawliT SEO Dashboard — Next.js, Tailwind, and DataForSEO. Project-based workspace with GAP Analysis, Backlinks, Site Audit, and AI Visibility. Ready to deploy on Vercel.
 
+## Screenshot
+
+Sube tu captura o logo en la carpeta **`assets/`** del proyecto (por ejemplo `assets/screenshot.png`) y añade en este README:
+
+```markdown
+![CrawliT SEO Dashboard](assets/screenshot.png)
+```
+
+O pega la línea donde quieras que se vea la imagen.
+
 ## Author
 
 **Rusben Madrigal**  
