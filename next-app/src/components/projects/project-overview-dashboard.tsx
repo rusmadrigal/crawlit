@@ -205,6 +205,73 @@ function normalizeIntentKey(intent: string | null | undefined): string {
   return intent.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+const KEYWORD_FILTER_OPERATORS = [
+  { value: "is", label: "Is" },
+  { value: "is_not", label: "Is not" },
+  { value: "contains", label: "Contains" },
+  { value: "not_contains", label: "Doesn't contain" },
+  { value: "starts_with", label: "Starts with" },
+  { value: "ends_with", label: "Ends with" },
+  { value: "not_starts_with", label: "Doesn't start with" },
+  { value: "not_ends_with", label: "Doesn't end with" },
+  { value: "regex", label: "Matches regex" },
+  { value: "not_regex", label: "Doesn't match regex" },
+] as const;
+
+function matchKeywordFilter(keyword: string, operator: string, value: string, matchMode: "all" | "any"): boolean {
+  const raw = value.trim();
+  if (!raw) return true;
+  const values = raw.split(",").map((v) => v.trim()).filter(Boolean);
+  if (values.length === 0) return true;
+  const kw = keyword.toLowerCase();
+  const isNegative = ["is_not", "not_contains", "not_starts_with", "not_ends_with", "not_regex"].includes(operator);
+  if (isNegative) {
+    return values.every((v) => {
+      const vLower = v.toLowerCase();
+      try {
+        switch (operator) {
+          case "is_not":
+            return kw !== vLower;
+          case "not_contains":
+            return !kw.includes(vLower);
+          case "not_starts_with":
+            return !kw.startsWith(vLower);
+          case "not_ends_with":
+            return !kw.endsWith(vLower);
+          case "not_regex":
+            return !new RegExp(v, "i").test(keyword);
+          default:
+            return true;
+        }
+      } catch {
+        return true;
+      }
+    });
+  }
+  const testOne = (v: string): boolean => {
+    const vLower = v.toLowerCase();
+    try {
+      switch (operator) {
+        case "is":
+          return kw === vLower;
+        case "contains":
+          return kw.includes(vLower);
+        case "starts_with":
+          return kw.startsWith(vLower);
+        case "ends_with":
+          return kw.endsWith(vLower);
+        case "regex":
+          return new RegExp(v, "i").test(keyword);
+        default:
+          return kw.includes(vLower);
+      }
+    } catch {
+      return false;
+    }
+  };
+  return matchMode === "all" ? values.every(testOne) : values.some(testOne);
+}
+
 function IntentBadge({ intent }: { intent: string | null }) {
   if (!intent) return <span style={{ color: "var(--muted)" }}>—</span>;
   const key = intent.toLowerCase().replace(/\s+/g, " ");
@@ -308,6 +375,10 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
   const [intentFilter, setIntentFilter] = useState<string[]>([]);
   const [intentDropdownOpen, setIntentDropdownOpen] = useState(false);
   const intentDropdownRef = useRef<HTMLDivElement>(null);
+  const [keywordFilter, setKeywordFilter] = useState<{ operator: string; value: string; matchMode: "all" | "any" } | null>(null);
+  const [keywordDropdownOpen, setKeywordDropdownOpen] = useState(false);
+  const [keywordFilterDraft, setKeywordFilterDraft] = useState<{ operator: string; value: string; matchMode: "all" | "any" }>({ operator: "contains", value: "", matchMode: "any" });
+  const keywordDropdownRef = useRef<HTMLDivElement>(null);
 
   const locationCode = project?.locationCode ?? DEFAULT_LOCATION_CODE;
 
@@ -362,6 +433,17 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [intentDropdownOpen]);
+
+  useEffect(() => {
+    if (!keywordDropdownOpen) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (keywordDropdownRef.current && !keywordDropdownRef.current.contains(e.target as Node)) {
+        setKeywordDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [keywordDropdownOpen]);
 
   const isLoading = overviewLoading && !overviewData;
   const isRefreshing = refreshing;
@@ -818,10 +900,15 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
         )
           .map(([key, label]) => ({ key, label }))
           .sort((a, b) => a.label.localeCompare(b.label));
-        const filteredKeywords =
+        let filteredKeywords =
           intentFilter.length === 0
             ? topKeywords
             : topKeywords.filter((kw) => intentFilter.includes(normalizeIntentKey(kw.intent)));
+        if (keywordFilter && keywordFilter.value.trim()) {
+          filteredKeywords = filteredKeywords.filter((kw) =>
+            matchKeywordFilter(kw.keyword, keywordFilter.operator, keywordFilter.value, keywordFilter.matchMode)
+          );
+        }
         return (
         <div className="ml-2 mt-2 md:ml-4">
           <h2 className="mb-4 text-lg font-semibold" style={{ color: "var(--foreground)" }}>
@@ -835,7 +922,120 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                     className="border-b text-left font-medium"
                     style={{ borderColor: "var(--border)", color: "var(--table-head)" }}
                   >
-                    <th className="py-3 pl-4 pr-4">Keyword</th>
+                    <th className="py-3 pl-4 pr-4">
+                      <div ref={keywordDropdownRef} className="relative inline-flex items-center gap-1">
+                        <span>Keyword</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setKeywordDropdownOpen((o) => !o);
+                            if (!keywordDropdownOpen && keywordFilter) {
+                              setKeywordFilterDraft({ operator: keywordFilter.operator, value: keywordFilter.value, matchMode: keywordFilter.matchMode });
+                            } else if (!keywordDropdownOpen) {
+                              setKeywordFilterDraft({ operator: "contains", value: "", matchMode: "any" });
+                            }
+                          }}
+                          className="rounded p-0.5 transition-colors hover:bg-[var(--muted-bg)]"
+                          style={{ color: "var(--muted)" }}
+                          aria-label="Filter by keyword"
+                          aria-expanded={keywordDropdownOpen}
+                        >
+                          <ChevronDown className="size-4 shrink-0" aria-hidden />
+                        </button>
+                        {keywordDropdownOpen && (
+                          <div
+                            className="absolute left-0 top-full z-50 mt-1 w-80 overflow-hidden rounded-lg border shadow-lg"
+                            style={{ borderColor: "var(--border)", backgroundColor: "var(--card)" }}
+                          >
+                            <div className="border-b p-2" style={{ borderColor: "var(--border)" }}>
+                              <div className="mb-2 flex gap-1 rounded-lg p-0.5" style={{ backgroundColor: "var(--muted-bg)" }}>
+                                <button
+                                  type="button"
+                                  onClick={() => setKeywordFilterDraft((d) => ({ ...d, matchMode: "all" }))}
+                                  className={`flex-1 rounded-md px-2 py-1 text-xs font-medium transition-colors ${keywordFilterDraft.matchMode === "all" ? "" : "opacity-70"}`}
+                                  style={{
+                                    backgroundColor: keywordFilterDraft.matchMode === "all" ? "var(--card)" : "transparent",
+                                    color: "var(--foreground)",
+                                    boxShadow: keywordFilterDraft.matchMode === "all" ? "0 1px 2px rgba(0,0,0,0.05)" : "none",
+                                  }}
+                                >
+                                  All rules
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setKeywordFilterDraft((d) => ({ ...d, matchMode: "any" }))}
+                                  className={`flex-1 rounded-md px-2 py-1 text-xs font-medium transition-colors ${keywordFilterDraft.matchMode === "any" ? "" : "opacity-70"}`}
+                                  style={{
+                                    backgroundColor: keywordFilterDraft.matchMode === "any" ? "var(--card)" : "transparent",
+                                    color: "var(--foreground)",
+                                    boxShadow: keywordFilterDraft.matchMode === "any" ? "0 1px 2px rgba(0,0,0,0.05)" : "none",
+                                  }}
+                                >
+                                  Any rule
+                                </button>
+                              </div>
+                              <div className="flex gap-2">
+                                <select
+                                  value={keywordFilterDraft.operator}
+                                  onChange={(e) => setKeywordFilterDraft((d) => ({ ...d, operator: e.target.value }))}
+                                  className="flex-1 rounded border px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+                                  style={{ borderColor: "var(--border)", backgroundColor: "var(--input-bg)", color: "var(--foreground)" }}
+                                >
+                                  {KEYWORD_FILTER_OPERATORS.map((op) => (
+                                    <option key={op.value} value={op.value}>
+                                      {op.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <input
+                                type="text"
+                                value={keywordFilterDraft.value}
+                                onChange={(e) => setKeywordFilterDraft((d) => ({ ...d, value: e.target.value }))}
+                                placeholder="Values separated by commas"
+                                className="mt-2 w-full rounded border px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+                                style={{ borderColor: "var(--border)", backgroundColor: "var(--input-bg)", color: "var(--foreground)" }}
+                              />
+                            </div>
+                            <div className="flex items-center justify-between gap-2 border-t p-2" style={{ borderColor: "var(--border)" }}>
+                              {keywordFilter && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setKeywordFilter(null);
+                                    setKeywordFilterDraft({ operator: "contains", value: "", matchMode: "any" });
+                                    setKeywordDropdownOpen(false);
+                                  }}
+                                  className="text-xs font-medium hover:underline"
+                                  style={{ color: "var(--muted)" }}
+                                >
+                                  Clear filter
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (keywordFilterDraft.value.trim()) {
+                                    setKeywordFilter({
+                                      operator: keywordFilterDraft.operator,
+                                      value: keywordFilterDraft.value,
+                                      matchMode: keywordFilterDraft.matchMode,
+                                    });
+                                  } else {
+                                    setKeywordFilter(null);
+                                  }
+                                  setKeywordDropdownOpen(false);
+                                }}
+                                className="ml-auto rounded-lg px-4 py-2 text-sm font-medium transition-colors hover:opacity-90"
+                                style={{ backgroundColor: "var(--primary)", color: "white" }}
+                              >
+                                Apply
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </th>
                     <th className="py-3 pr-4 text-right">
                       <SortableHeader
                         label="Volume"
