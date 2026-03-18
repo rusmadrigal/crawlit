@@ -1,6 +1,6 @@
 # CrawliT SEO Dashboard
 
-CrawliT SEO Dashboard — Next.js, Tailwind, and DataForSEO. Project-based workspace with GAP Analysis, Backlinks, Site Audit, and AI Visibility. Ready to deploy on Vercel.
+CrawliT SEO Dashboard - Next.js, Tailwind, and DataForSEO. Project-based workspace with GAP Analysis, Backlinks, Site Audit, and AI Visibility. Ready to deploy on Vercel.
 
 ## Screenshot
 
