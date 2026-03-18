@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Search,
@@ -184,6 +184,27 @@ const INTENT_COLORS: Record<string, string> = {
   "commercial investigation": "#0891b2",
 };
 
+const INTENT_UNKNOWN_KEY = "__unknown__";
+
+const INTENT_BADGE_LETTER: Record<string, string> = {
+  informational: "I",
+  navigational: "N",
+  commercial: "C",
+  transactional: "T",
+  transaction: "T",
+  "commercial investigation": "CI",
+};
+
+function getIntentBadgeLetter(key: string): string {
+  if (key === INTENT_UNKNOWN_KEY) return "—";
+  return INTENT_BADGE_LETTER[key] ?? key.slice(0, 1).toUpperCase();
+}
+
+function normalizeIntentKey(intent: string | null | undefined): string {
+  if (intent == null || !String(intent).trim()) return INTENT_UNKNOWN_KEY;
+  return intent.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
 function IntentBadge({ intent }: { intent: string | null }) {
   if (!intent) return <span style={{ color: "var(--muted)" }}>—</span>;
   const key = intent.toLowerCase().replace(/\s+/g, " ");
@@ -284,6 +305,9 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
   const [showOrganicKeywords, setShowOrganicKeywords] = useState(false);
   const [perfTimeRange, setPerfTimeRange] = useState<"12m" | "2y">("12m");
   const [perfGranularity, setPerfGranularity] = useState<"daily" | "monthly">("monthly");
+  const [intentFilter, setIntentFilter] = useState<string[]>([]);
+  const [intentDropdownOpen, setIntentDropdownOpen] = useState(false);
+  const intentDropdownRef = useRef<HTMLDivElement>(null);
 
   const locationCode = project?.locationCode ?? DEFAULT_LOCATION_CODE;
 
@@ -327,6 +351,17 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
     if (project?.domain) fetchOverview();
     else setOverviewData(null);
   }, [project?.domain, fetchOverview]);
+
+  useEffect(() => {
+    if (!intentDropdownOpen) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (intentDropdownRef.current && !intentDropdownRef.current.contains(e.target as Node)) {
+        setIntentDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [intentDropdownOpen]);
 
   const isLoading = overviewLoading && !overviewData;
   const isRefreshing = refreshing;
@@ -770,7 +805,24 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
       ) : null}
 
       {/* Top keywords table */}
-      {overviewData?.topKeywords && overviewData.topKeywords.length > 0 && (
+      {overviewData?.topKeywords && overviewData.topKeywords.length > 0 && (() => {
+        const topKeywords = overviewData.topKeywords;
+        const intentOptions = Array.from(
+          new Map(
+            topKeywords.map((kw) => {
+              const key = normalizeIntentKey(kw.intent);
+              const label = kw.intent?.trim() ? kw.intent : "Unknown";
+              return [key, label] as const;
+            })
+          ).entries()
+        )
+          .map(([key, label]) => ({ key, label }))
+          .sort((a, b) => a.label.localeCompare(b.label));
+        const filteredKeywords =
+          intentFilter.length === 0
+            ? topKeywords
+            : topKeywords.filter((kw) => intentFilter.includes(normalizeIntentKey(kw.intent)));
+        return (
         <div className="ml-2 mt-2 md:ml-4">
           <h2 className="mb-4 text-lg font-semibold" style={{ color: "var(--foreground)" }}>
             Top keywords
@@ -798,7 +850,78 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                         }}
                       />
                     </th>
-                    <th className="py-3 pr-4 text-right">Intent</th>
+                    <th className="py-3 pr-4 text-right">
+                      <div ref={intentDropdownRef} className="relative inline-flex items-center justify-end gap-1">
+                        <span>Intent</span>
+                        <button
+                          type="button"
+                          onClick={() => setIntentDropdownOpen((o) => !o)}
+                          className="rounded p-0.5 transition-colors hover:bg-[var(--muted-bg)]"
+                          style={{ color: "var(--muted)" }}
+                          aria-label="Filter by intent"
+                          aria-expanded={intentDropdownOpen}
+                        >
+                          <ChevronDown className="size-4 shrink-0" aria-hidden />
+                        </button>
+                        {intentDropdownOpen && (
+                          <div
+                            className="absolute right-0 top-full z-50 mt-1 min-w-[200px] overflow-hidden rounded-lg border shadow-lg"
+                            style={{ borderColor: "var(--border)", backgroundColor: "var(--card)" }}
+                          >
+                            <p className="px-3 py-2 text-xs font-medium" style={{ color: "var(--muted)" }}>
+                              User intents
+                            </p>
+                            <ul className="max-h-64 overflow-y-auto py-1">
+                              {intentOptions.map(({ key, label }) => {
+                                const isChecked = intentFilter.length === 0 || intentFilter.includes(key);
+                                const bgColor = key === INTENT_UNKNOWN_KEY ? "#64748b" : (INTENT_COLORS[key] ?? "#64748b");
+                                return (
+                                  <li key={key}>
+                                    <label className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-[var(--muted-bg)]" style={{ color: "var(--foreground)" }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={isChecked}
+                                        onChange={() => {
+                                          if (intentFilter.length === 0) {
+                                            setIntentFilter(intentOptions.map((o) => o.key).filter((k) => k !== key));
+                                          } else if (intentFilter.includes(key)) {
+                                            const next = intentFilter.filter((k) => k !== key);
+                                            setIntentFilter(next.length === 0 ? [] : next);
+                                          } else {
+                                            setIntentFilter([...intentFilter, key]);
+                                          }
+                                        }}
+                                        className="h-3.5 w-3.5 rounded border-[var(--border)]"
+                                        style={{ accentColor: "var(--primary)" }}
+                                      />
+                                      <span className="flex-1">{label}</span>
+                                      <span
+                                        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-xs font-semibold text-white"
+                                        style={{ backgroundColor: bgColor }}
+                                      >
+                                        {getIntentBadgeLetter(key)}
+                                      </span>
+                                    </label>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                            {intentFilter.length > 0 && (
+                              <div className="border-t py-1.5" style={{ borderColor: "var(--border)" }}>
+                                <button
+                                  type="button"
+                                  onClick={() => setIntentFilter([])}
+                                  className="w-full px-3 py-1.5 text-left text-xs font-medium hover:bg-[var(--muted-bg)]"
+                                  style={{ color: "var(--muted)" }}
+                                >
+                                  Clear filter
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </th>
                     <th className="py-3 pr-4 text-right">KD</th>
                     <th className="py-3 pr-4 text-right">
                       <SortableHeader
@@ -834,7 +957,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {[...overviewData.topKeywords]
+                  {[...filteredKeywords]
                     .sort((a, b) => {
                       let va: number, vb: number;
                       if (sortBy === "volume") {
@@ -906,7 +1029,8 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
             </div>
           </Card>
         </div>
-      )}
+        );
+      })()}
 
       <RankingHistoryModal
         keyword={historyModalKeyword ?? ""}
