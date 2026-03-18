@@ -5,6 +5,7 @@
  */
 export const COUNTRY_LOCATIONS: { locationCode: number; locationName: string; countryIso: string }[] = [
   { locationCode: 2840, locationName: "United States", countryIso: "US" },
+  { locationCode: 1023192, locationName: "Puerto Rico", countryIso: "PR" },
   { locationCode: 2826, locationName: "United Kingdom", countryIso: "GB" },
   { locationCode: 2124, locationName: "Canada", countryIso: "CA" },
   { locationCode: 2036, locationName: "Australia", countryIso: "AU" },
@@ -33,3 +34,13 @@ export const COUNTRY_LOCATIONS: { locationCode: number; locationName: string; co
 
 /** Default location when none is set (United States). */
 export const DEFAULT_LOCATION_CODE = 2840;
+
+/** Returns a flag emoji for a given ISO 3166-1 alpha-2 country code (e.g. "US" -> 🇺🇸). */
+export function getCountryFlagEmoji(iso: string): string {
+  const code = iso.toUpperCase();
+  if (code.length !== 2) return "";
+  return code
+    .split("")
+    .map((c) => String.fromCodePoint(0x1f1e6 - 65 + c.charCodeAt(0)))
+    .join("");
+}
