@@ -16,11 +16,11 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Craw iT",
-    template: "%s | Craw iT",
+    default: "CrawliT",
+    template: "%s | CrawliT",
   },
   description:
-    "Keyword research, domain overview, backlinks and site audits. Track multiple projects by domain with Craw iT.",
+    "CrawliT SEO Dashboard — keyword research, visibility, backlinks and site audits. Track multiple projects by domain.",
 };
 
 export default function RootLayout({
@@ -33,7 +33,7 @@ export default function RootLayout({
       <head>
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){var t=localStorage.getItem("seo-dashboard-theme");document.documentElement.classList.add(t==="dark"?"dark":"light");})();`,
+            __html: `(function(){var t=localStorage.getItem("crawlit-theme");document.documentElement.classList.add(t==="dark"?"dark":"light");})();`,
           }}
         />
       </head>

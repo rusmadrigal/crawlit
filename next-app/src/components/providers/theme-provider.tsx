@@ -2,7 +2,7 @@
 
 import * as React from "react";
 
-const STORAGE_KEY = "seo-dashboard-theme";
+const STORAGE_KEY = "crawlit-theme";
 
 type Theme = "light" | "dark";
 

@@ -1,14 +1,16 @@
-# SEO Dashboard
+# CrawliT SEO Dashboard
 
-SEO dashboard with Next.js, Tailwind, and DataForSEO. Ready to deploy on Vercel.
+CrawliT SEO Dashboard — Next.js, Tailwind, and DataForSEO. Project-based workspace with GAP Analysis, Backlinks, Site Audit, and AI Visibility. Ready to deploy on Vercel.
+
+## Author
+
+**Rusben Madrigal**  
+- Web: [www.rusmadrigal.com](https://www.rusmadrigal.com)  
+- LinkedIn: [linkedin.com/in/rusmadrigal](https://www.linkedin.com/in/rusmadrigal/)
 
 ## Repo structure
 
-- **`next-app/`** – Main app (Next.js 16, App Router). Includes:
-  - Keyword Research with DataForSEO
-  - Domain Overview, Site Audit, Backlinks, AI (pages ready to connect more APIs)
-  - Fintech-style UI (Tailwind, reusable components)
-- **`keyword-dashboard/`** – Keyword research dashboard in Next.js (UI demo with mock data; optional).
+- **`next-app/`** – CrawliT app (Next.js 16, App Router): project-based SEO dashboard with GAP Analysis, Backlinks, Site Audit, AI Visibility, and DataForSEO integration.
 
 ## Local development
 
@@ -49,4 +51,4 @@ Open [http://localhost:3000](http://localhost:3000). Default route is `/p/defaul
 
 ## License
 
-See [LICENSE](LICENSE).
+MIT © Rusben Madrigal. See [LICENSE](LICENSE).

@@ -7,13 +7,10 @@ export function Logo() {
     <Link
       href="/"
       className="group relative inline-block font-semibold text-white outline-none focus-visible:ring-2 focus-visible:ring-white/50 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900"
-      aria-label="Craw iT – Home"
+      aria-label="CrawliT – Home"
     >
       <span className="relative inline-block text-lg tracking-tight transition-[letter-spacing,transform] duration-300 ease-out group-hover:tracking-wide">
-        Craw
-      </span>
-      <span className="relative inline-block text-lg tracking-tight transition-[letter-spacing,transform] duration-300 ease-out group-hover:tracking-wide">
-        {" "}i
+        Crawli
       </span>
       <span className="relative inline-block text-lg tracking-tight transition-[letter-spacing,transform] duration-300 ease-out group-hover:tracking-wide group-hover:translate-y-[-2px]">
         T

@@ -5,7 +5,7 @@ const API_ACCESS_URL = "https://app.dataforseo.com/api-access";
 
 export const metadata = {
   title: "DataForSEO API key",
-  description: "How to get and set your DataForSEO API key in Craw iT.",
+  description: "How to get and set your DataForSEO API key in CrawliT.",
 };
 
 export default function DataforseoApiKeyHelpPage() {
@@ -16,7 +16,7 @@ export default function DataforseoApiKeyHelpPage() {
           DataForSEO API key
         </h1>
         <p className="mt-1 text-sm text-slate-500">
-          Craw iT uses DataForSEO to fetch SEO data. You need an API key to connect.
+          CrawliT uses DataForSEO to fetch SEO data. You need an API key to connect.
         </p>
       </div>
 
@@ -68,7 +68,7 @@ printf '%s' 'YOUR_LOGIN:YOUR_PASSWORD' | base64`}
           href="/"
           className="inline-flex h-9 items-center justify-center rounded-lg bg-slate-900 px-4 text-sm font-medium text-white shadow hover:bg-slate-800"
         >
-          Back to Craw iT
+          Back to CrawliT
         </Link>
       </div>
     </div>

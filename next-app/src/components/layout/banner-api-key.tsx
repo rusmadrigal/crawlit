@@ -16,7 +16,7 @@ export function BannerApiKey({
         <div className="mx-auto flex max-w-7xl items-center gap-2 text-sm text-amber-800">
           <AlertTriangle className="size-4 shrink-0" aria-hidden />
           <span>
-            Add your DataForSEO API key to use Craw iT.{" "}
+            Add your DataForSEO API key to use CrawliT.{" "}
             <Link href="/help/dataforseo-api-key" className="font-medium underline underline-offset-2">
               Setup guide
             </Link>

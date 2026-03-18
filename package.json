@@ -1,7 +1,8 @@
 {
-  "name": "seo-dashboard",
+  "name": "crawlit-seo-dashboard",
   "private": true,
-  "description": "SEO dashboard (Next.js + DataForSEO)",
+  "description": "CrawliT SEO Dashboard (Next.js + DataForSEO)",
+  "author": "Rusben Madrigal <https://www.rusmadrigal.com>",
   "scripts": {
     "dev": "npm run dev --prefix next-app",
     "build": "npm run build --prefix next-app",

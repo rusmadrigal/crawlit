@@ -1,6 +1,6 @@
-# Craw iT (Next.js)
+# CrawliT (Next.js)
 
-Next.js SEO dashboard with project-based keyword research, visibility metrics, and DataForSEO integration. Ready for Vercel deploy.
+CrawliT SEO Dashboard — Next.js app with project-based keyword research, visibility metrics, and DataForSEO integration. By **Rusben Madrigal** ([www.rusmadrigal.com](https://www.rusmadrigal.com) · [LinkedIn](https://www.linkedin.com/in/rusmadrigal/)). Ready for Vercel deploy.
 
 ## Stack
 
