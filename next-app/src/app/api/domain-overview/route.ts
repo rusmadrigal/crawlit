@@ -9,6 +9,10 @@ export type DomainOverviewApiResponse = {
   domain?: string;
   visibilityEtv?: number | null;
   organicCount?: number | null;
+  /** Time series for Performance chart: { date, organicPages, organicTraffic, organicKeywords? } */
+  history?: { date: string; organicPages: number; organicTraffic: number; organicKeywords?: number }[];
+  /** Set when historical_rank_overview failed (e.g. domain not in index, rate limit) */
+  historyError?: string;
   keywordCount?: number;
   totalSearchVolume?: number;
   topKeywords?: { keyword: string; searchVolume: number; cpc?: number | null; position?: number | null; url?: string | null; keywordDifficulty?: number | null; intent?: string | null }[];
@@ -48,7 +52,12 @@ export async function GET(request: NextRequest) {
   try {
     const [keywordsResult, visibilityResult, rankedRows] = await Promise.all([
       fetchKeywordsForSite(domain, locationCode),
-      fetchHistoricalRankOverview(domain, locationCode).catch(() => ({ visibilityEtv: null, organicCount: null })),
+      fetchHistoricalRankOverview(domain, locationCode).then((r) => ({ ...r, historyError: undefined as string | undefined })).catch((err) => ({
+        visibilityEtv: null as number | null,
+        organicCount: null as number | null,
+        history: [] as { date: string; organicPages: number; organicTraffic: number; organicKeywords?: number }[],
+        historyError: err instanceof Error ? err.message : "Failed to load historical data",
+      })),
       fetchRankedKeywords(domain, locationCode).catch(() => [] as { keyword: string; searchVolume: number; cpc: number | null; position: number | null; url: string | null; keywordDifficulty: number | null; intent: string | null }[]),
     ]);
 
@@ -83,12 +92,20 @@ export async function GET(request: NextRequest) {
             intent: null as string | null,
           }));
 
+    let history = visibilityResult.history ?? [];
+    if (history.length > 0 && keywordsResult.keywordCount != null) {
+      history = [...history];
+      const last = history[history.length - 1];
+      history[history.length - 1] = { ...last, organicKeywords: keywordsResult.keywordCount };
+    }
     const payload: DomainOverviewApiResponse = {
       ok: true,
       configured: true,
       domain,
       visibilityEtv: visibilityResult.visibilityEtv,
       organicCount: visibilityResult.organicCount,
+      history,
+      historyError: visibilityResult.historyError,
       keywordCount: keywordsResult.keywordCount,
       totalSearchVolume: keywordsResult.totalSearchVolume,
       topKeywords,

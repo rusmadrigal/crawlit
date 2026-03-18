@@ -369,8 +369,10 @@ export async function fetchSearchIntent(
 // --- Historical Rank Overview (visibility / estimated traffic) ---
 
 export type HistoricalRankOverviewResult = {
-  visibilityEtv: number | null; // estimated monthly organic traffic
-  organicCount: number | null;  // total organic SERPs containing the domain
+  visibilityEtv: number | null;
+  organicCount: number | null;
+  /** Time series by month for charts: organic pages (count) and organic traffic (etv) */
+  history?: { date: string; organicPages: number; organicTraffic: number }[];
 };
 
 export async function fetchHistoricalRankOverview(
@@ -382,15 +384,14 @@ export async function fetchHistoricalRankOverview(
   if (!apiKey) throw new Error("DATAFORSEO_API_KEY is not set.");
 
   const target = domain.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").toLowerCase().trim() || domain;
-  const dateTo = new Date();
-  const dateFrom = new Date(dateTo);
-  dateFrom.setMonth(dateFrom.getMonth() - 6);
+  const dateFrom = new Date();
+  dateFrom.setMonth(dateFrom.getMonth() - 24); // up to 2 years (API: from 2020-10-01)
   const dateFromStr = dateFrom.toISOString().slice(0, 10);
-  const dateToStr = dateTo.toISOString().slice(0, 10);
 
-  const url = `${API_BASE}/v3/dataforseo_labs/google/historical_rank_overview/live`;
+  // Only send date_from; API uses today as date_to by default (date_to can trigger "Invalid Field" on some endpoints)
+  const url = `${API_BASE}/v3/dataforseo_labs/historical_rank_overview/live`;
   const body = JSON.stringify([
-    { target, location_code: locationCode, language_code: languageCode, date_from: dateFromStr, date_to: dateToStr },
+    { target, location_code: locationCode, language_code: languageCode, date_from: dateFromStr },
   ]);
 
   const res = await fetch(url, {
@@ -402,7 +403,7 @@ export async function fetchHistoricalRankOverview(
     body,
   });
 
-  const json = (await res.json()) as {
+  const jsonTyped = (await res.json()) as {
     status_code?: number;
     status_message?: string;
     tasks?: Array<{
@@ -418,11 +419,11 @@ export async function fetchHistoricalRankOverview(
     }>;
   };
 
-  if (json.status_code !== 20000) {
-    throw new Error(json.status_message ?? `DataForSEO error ${json.status_code ?? "unknown"}`);
+  if (jsonTyped.status_code !== 20000) {
+    throw new Error(jsonTyped.status_message ?? `DataForSEO error ${jsonTyped.status_code ?? "unknown"}`);
   }
 
-  const task = json.tasks?.[0];
+  const task = jsonTyped.tasks?.[0];
   if (!task || task.status_code !== 20000) {
     throw new Error(
       (task as { status_message?: string })?.status_message ?? `Task error ${task?.status_code ?? "unknown"}`
@@ -459,12 +460,20 @@ export async function fetchHistoricalRankOverview(
   }
 
   if (allItems.length === 0) {
-    return { visibilityEtv: null, organicCount: null };
+    return { visibilityEtv: null, organicCount: null, history: [] };
   }
 
-  const latest = allItems.sort((a, b) => b.year - a.year || b.month - a.month)[0];
+  const sorted = [...allItems].sort((a, b) => a.year - b.year || a.month - b.month);
+  const latest = sorted[sorted.length - 1];
+  const history = sorted.map(({ year, month, etv, count }) => ({
+    date: `${year}-${String(month).padStart(2, "0")}-01`,
+    organicPages: count,
+    organicTraffic: Math.round(etv),
+  }));
+
   return {
     visibilityEtv: latest.etv > 0 ? Math.round(latest.etv) : null,
     organicCount: latest.count > 0 ? latest.count : null,
+    history,
   };
 }

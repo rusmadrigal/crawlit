@@ -16,7 +16,20 @@ import {
   Trash2,
   ChevronUp,
   ChevronDown,
+  Activity,
+  Calendar,
+  Download,
+  MessageSquare,
 } from "lucide-react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
 import { useProjects } from "@/components/providers/projects-provider";
 import { DEFAULT_LOCATION_CODE } from "@/lib/locations";
 import { cn } from "@/lib/utils";
@@ -216,9 +229,13 @@ function SortableHeader({
   );
 }
 
+type HistoryPoint = { date: string; organicPages: number; organicTraffic: number; organicKeywords?: number };
+
 type OverviewData = {
   visibilityEtv?: number | null;
   organicCount?: number | null;
+  history?: HistoryPoint[];
+  historyError?: string;
   keywordCount?: number;
   totalSearchVolume?: number;
   topKeywords?: TopKeywordRow[];
@@ -262,6 +279,11 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
   const [historyModalKeyword, setHistoryModalKeyword] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<"volume" | "cpc" | "position">("volume");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+  const [showOrganicPages, setShowOrganicPages] = useState(true);
+  const [showOrganicTraffic, setShowOrganicTraffic] = useState(true);
+  const [showOrganicKeywords, setShowOrganicKeywords] = useState(false);
+  const [perfTimeRange, setPerfTimeRange] = useState<"12m" | "2y">("12m");
+  const [perfGranularity, setPerfGranularity] = useState<"daily" | "monthly">("monthly");
 
   const locationCode = project?.locationCode ?? DEFAULT_LOCATION_CODE;
 
@@ -283,6 +305,8 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
         setOverviewData({
           visibilityEtv: data.visibilityEtv,
           organicCount: data.organicCount,
+          history: data.history,
+          historyError: data.historyError,
           keywordCount: data.keywordCount,
           totalSearchVolume: data.totalSearchVolume,
           topKeywords: data.topKeywords,
@@ -473,6 +497,277 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
           </CardContent>
         </Card>
       </div>
+
+      {/* Performance chart — always show when overview is loaded */}
+      {overviewData ? (
+        <Card className="overflow-hidden border-[var(--card-border)] bg-[var(--card)] shadow-sm">
+          <div className="border-b px-5 py-3" style={{ borderColor: "var(--border)" }}>
+            <span className="text-sm font-medium" style={{ color: "var(--foreground)" }}>Performance</span>
+          </div>
+          <CardContent className="pt-4">
+            {/* Legend toggles + right controls */}
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-4">
+                <label className="inline-flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={showOrganicPages}
+                    onChange={(e) => setShowOrganicPages(e.target.checked)}
+                    className="h-4 w-4 rounded border-[var(--border)]"
+                    style={{ accentColor: "#2b76b9" }}
+                  />
+                  <span className="text-sm font-medium" style={{ color: "#2b76b9" }}>Organic pages</span>
+                </label>
+                <label className="inline-flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={showOrganicTraffic}
+                    onChange={(e) => setShowOrganicTraffic(e.target.checked)}
+                    className="h-4 w-4 rounded border-[var(--border)]"
+                    style={{ accentColor: "#e68a00" }}
+                  />
+                  <span className="text-sm font-medium" style={{ color: "#e68a00" }}>Organic traffic</span>
+                </label>
+                <label className="inline-flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={showOrganicKeywords}
+                    onChange={(e) => setShowOrganicKeywords(e.target.checked)}
+                    className="h-4 w-4 rounded border-[var(--border)]"
+                    style={{ accentColor: "#059669" }}
+                  />
+                  <span className="text-sm font-medium" style={{ color: "#059669" }}>Organic keywords</span>
+                </label>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1.5 rounded border px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
+                  <Calendar className="size-4 shrink-0" style={{ color: "var(--muted)" }} aria-hidden />
+                  <select
+                    value={perfTimeRange}
+                    onChange={(e) => setPerfTimeRange(e.target.value as "12m" | "2y")}
+                    className="cursor-pointer border-0 bg-transparent focus:outline-none focus:ring-0"
+                    style={{ color: "var(--foreground)" }}
+                  >
+                    <option value="12m">Last 12 months</option>
+                    <option value="2y">Last 2 years</option>
+                  </select>
+                </div>
+                <div className="rounded border px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", color: "var(--foreground)" }} title="DataForSEO only provides monthly data">
+                  <select
+                    value={perfGranularity}
+                    onChange={(e) => setPerfGranularity(e.target.value as "daily" | "monthly")}
+                    className="cursor-pointer border-0 bg-transparent focus:outline-none focus:ring-0"
+                    style={{ color: "var(--foreground)" }}
+                  >
+                    <option value="monthly">Monthly</option>
+                    <option value="daily">Daily (monthly data)</option>
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  className="rounded border p-2 transition-colors hover:bg-[var(--muted-bg)]"
+                  style={{ borderColor: "var(--border)" }}
+                  title="Notes"
+                  aria-label="Notes"
+                >
+                  <MessageSquare className="size-4" style={{ color: "var(--muted)" }} aria-hidden />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const chartData = (overviewData?.history?.length
+                      ? overviewData.history
+                      : (() => {
+                          const now = new Date();
+                          const y = now.getFullYear();
+                          const m = String(now.getMonth() + 1).padStart(2, "0");
+                          return [
+                            {
+                              date: `${y}-${m}-01`,
+                              organicPages: overviewData?.organicCount ?? 0,
+                              organicTraffic: overviewData?.visibilityEtv ?? overviewData?.totalSearchVolume ?? 0,
+                            },
+                          ];
+                        })()) as HistoryPoint[];
+                    const cutoff = perfTimeRange === "2y" ? 24 : 12;
+                    const filtered = chartData.slice(-cutoff);
+                    const header = "date,organic_pages,organic_traffic\n";
+                    const rows = filtered.map((d) => `${d.date},${d.organicPages},${d.organicTraffic}`).join("\n");
+                    const blob = new Blob([header + rows], { type: "text/csv" });
+                    const a = document.createElement("a");
+                    a.href = URL.createObjectURL(blob);
+                    a.download = `performance-${project?.domain ?? "export"}.csv`;
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                  }}
+                  className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm font-medium transition-colors hover:bg-[var(--muted-bg)]"
+                  style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                >
+                  <Download className="size-4" aria-hidden />
+                  Export
+                </button>
+              </div>
+            </div>
+            {/* Dual-axis line chart — use history or fallback to current metrics */}
+            {(() => {
+              const rawHistory = overviewData.history && overviewData.history.length > 0
+                ? overviewData.history
+                : null;
+              const fallbackPoint: HistoryPoint[] = !rawHistory && (overviewData.organicCount != null || overviewData.visibilityEtv != null || (overviewData.totalSearchVolume != null && overviewData.totalSearchVolume > 0))
+                ? (() => {
+                    const now = new Date();
+                    const y = now.getFullYear();
+                    const m = String(now.getMonth() + 1).padStart(2, "0");
+                    return [
+                      {
+                        date: `${y}-${m}-01`,
+                        organicPages: overviewData.organicCount ?? 0,
+                        organicTraffic: Math.round(Number(overviewData.visibilityEtv ?? overviewData.totalSearchVolume ?? 0)),
+                        organicKeywords: overviewData.keywordCount ?? undefined,
+                      },
+                    ];
+                  })()
+                : [];
+              let chartData = rawHistory ?? fallbackPoint;
+              if (chartData.length > 0 && overviewData.keywordCount != null) {
+                chartData = chartData.map((p) => ({
+                  ...p,
+                  organicKeywords: p.organicKeywords ?? overviewData.keywordCount ?? undefined,
+                }));
+              }
+              const formatDate = (d: string) => {
+                const [y, m] = d.split("-");
+                const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+                return `${months[Number(m) - 1]} ${y}`;
+              };
+
+              if (chartData.length === 0) {
+                return (
+                  <>
+                    <div className="flex h-[280px] items-center justify-center rounded-lg border" style={{ borderColor: "var(--border)", background: "var(--muted-bg)" }}>
+                      <p className="text-sm" style={{ color: "var(--muted)" }}>
+                        No data yet. Refresh data to load Performance history.
+                      </p>
+                    </div>
+                    {overviewData.historyError && (
+                      <p className="mt-2 text-xs" style={{ color: "var(--muted)" }}>
+                        History unavailable: {overviewData.historyError}. Try Refresh later.
+                      </p>
+                    )}
+                  </>
+                );
+              }
+
+              const monthsBack = perfTimeRange === "2y" ? 24 : 12;
+              const filtered = [...chartData].slice(-monthsBack);
+              const maxPages = Math.max(1, ...filtered.map((r) => r.organicPages));
+              const maxKeywords = Math.max(0, ...filtered.map((r) => r.organicKeywords ?? 0));
+              const maxLeft = Math.max(maxPages, maxKeywords);
+              const maxTraffic = Math.max(1, ...filtered.map((r) => r.organicTraffic));
+              const leftTicks = [0, Math.round(maxLeft / 2), maxLeft];
+              const rightTicks = [0, Math.round(maxTraffic / 2), maxTraffic];
+
+              return (
+                <>
+                <div className="h-[320px] w-full rounded-lg border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={filtered} margin={{ top: 16, right: 56, left: 48, bottom: 32 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                      <XAxis
+                        dataKey="date"
+                        tick={{ fontSize: 11, fill: "var(--muted)" }}
+                        tickFormatter={formatDate}
+                        axisLine={{ stroke: "var(--border)" }}
+                        tickLine={{ stroke: "var(--border)" }}
+                      />
+                      <YAxis
+                        yAxisId="left"
+                        orientation="left"
+                        tick={{ fontSize: 11, fill: "#2b76b9" }}
+                        tickFormatter={(v) => String(v)}
+                        ticks={leftTicks}
+                        axisLine={false}
+                        tickLine={{ stroke: "var(--border)" }}
+                        label={{ value: "Organic pages", angle: -90, position: "insideLeft", style: { fill: "#2b76b9", fontSize: 11 } }}
+                      />
+                      <YAxis
+                        yAxisId="right"
+                        orientation="right"
+                        tick={{ fontSize: 11, fill: "#e68a00" }}
+                        tickFormatter={(v) => (v >= 1000 ? `${(v / 1000).toFixed(0)}K` : String(v))}
+                        ticks={rightTicks}
+                        axisLine={false}
+                        tickLine={{ stroke: "var(--border)" }}
+                        label={{ value: "Organic traffic", angle: 90, position: "insideRight", style: { fill: "#e68a00", fontSize: 11 } }}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: "var(--card)",
+                          border: "1px solid var(--border)",
+                          borderRadius: "8px",
+                          boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+                        }}
+                        labelStyle={{ color: "var(--foreground)", fontWeight: 600 }}
+                        labelFormatter={(label) => formatDate(label)}
+                        formatter={(value: number, name: string) => [
+                          name === "organicTraffic" && value >= 1000 ? `${(value / 1000).toFixed(1)}K` : value,
+                          name === "organicPages" ? "Organic pages" : name === "organicTraffic" ? "Organic traffic" : "Organic keywords",
+                        ]}
+                      />
+                      {showOrganicPages && (
+                        <Line
+                          type="monotone"
+                          dataKey="organicPages"
+                          yAxisId="left"
+                          stroke="#2b76b9"
+                          strokeWidth={2}
+                          dot={filtered.length <= 3}
+                          name="organicPages"
+                        />
+                      )}
+                      {showOrganicTraffic && (
+                        <Line
+                          type="monotone"
+                          dataKey="organicTraffic"
+                          yAxisId="right"
+                          stroke="#e68a00"
+                          strokeWidth={2}
+                          dot={filtered.length <= 3}
+                          name="organicTraffic"
+                        />
+                      )}
+                      {showOrganicKeywords && (
+                        <Line
+                          type="monotone"
+                          dataKey="organicKeywords"
+                          yAxisId="left"
+                          stroke="#059669"
+                          strokeWidth={2}
+                          dot={false}
+                          name="organicKeywords"
+                        />
+                      )}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                {perfGranularity === "daily" && (
+                  <p className="mt-2 text-xs" style={{ color: "var(--muted)" }}>
+                    Data is in monthly resolution; DataForSEO does not provide a daily series.
+                  </p>
+                )}
+                {(!rawHistory || rawHistory.length === 0) && chartData.length > 0 ? (
+                  <p className="mt-2 text-xs" style={{ color: "var(--muted)" }}>
+                    {overviewData.historyError
+                      ? `History unavailable: ${overviewData.historyError}. The chart shows only the current month with estimated data.`
+                      : "Only the current month is shown. History (up to 2 years) is provided by DataForSEO; use Refresh to load previous months."}
+                  </p>
+                ) : null}
+              </>
+              );
+            })()}
+          </CardContent>
+        </Card>
+      ) : null}
 
       {/* Top keywords table */}
       {overviewData?.topKeywords && overviewData.topKeywords.length > 0 && (
