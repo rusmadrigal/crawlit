@@ -237,8 +237,10 @@ export async function fetchRankedKeywords(
 
   const json = (await res.json()) as {
     status_code?: number;
+    status_message?: string;
     tasks?: Array<{
       status_code?: number;
+      status_message?: string;
       result?: Array<{
         items?: Array<{
           keyword_data?: {

@@ -227,7 +227,7 @@ export function KeywordResearchForm() {
                           borderRadius: 8,
                         }}
                         labelStyle={{ color: "var(--foreground)" }}
-                        formatter={(value: number) => [value.toLocaleString(), "Volume"]}
+                        formatter={(value) => [Number(value ?? 0).toLocaleString(), "Volume"]}
                       />
                       <Line type="monotone" dataKey="volume" stroke="var(--primary)" strokeWidth={2} dot={false} />
                     </LineChart>
@@ -258,7 +258,7 @@ export function KeywordResearchForm() {
                       paddingAngle={2}
                       dataKey="value"
                       nameKey="name"
-                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                      label={({ name, percent }) => `${name} ${(((percent ?? 0) as number) * 100).toFixed(0)}%`}
                       labelLine={false}
                     >
                       {intentDistribution(items).map((_, i) => (
@@ -271,7 +271,7 @@ export function KeywordResearchForm() {
                         border: "1px solid var(--card-border)",
                         borderRadius: 8,
                       }}
-                      formatter={(value: number, name: string) => [value, name]}
+                      formatter={(value, name) => [Number(value ?? 0), String(name ?? "")]}
                     />
                     <Legend />
                   </RechartsPie>

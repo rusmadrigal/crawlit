@@ -35,7 +35,7 @@ export function slugFromDomain(domain: string): string {
 }
 
 export function createProjectId(domain: string, existingIds: string[]): string {
-  let id = slugFromDomain(domain);
+  const id = slugFromDomain(domain);
   const set = new Set(existingIds);
   if (!set.has(id)) return id;
   let n = 2;
@@ -70,4 +70,15 @@ export function getProjectById(id: string): Project | undefined {
 
 export function deleteProject(id: string): void {
   saveProjects(getProjects().filter((p) => p.id !== id));
+}
+
+export function updateProject(id: string, patch: Partial<Project>): Project | null {
+  const projects = getProjects();
+  const idx = projects.findIndex((p) => p.id === id);
+  if (idx === -1) return null;
+  const next: Project = { ...projects[idx], ...patch };
+  const updated = [...projects];
+  updated[idx] = next;
+  saveProjects(updated);
+  return next;
 }

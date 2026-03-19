@@ -3,14 +3,15 @@
 import * as React from "react";
 import { usePathname, useRouter } from "next/navigation";
 import type { Project } from "@/types/project";
-import { getProjects, addProject as addProjectStorage, getProjectById, deleteProject as deleteProjectStorage } from "@/lib/projects";
+import { getProjects, addProject as addProjectStorage, getProjectById, deleteProject as deleteProjectStorage, updateProject as updateProjectStorage } from "@/lib/projects";
 
 type ProjectsContextValue = {
   projects: Project[];
   currentProjectId: string | null;
   currentProject: Project | null;
-  addProject: (domain: string, name?: string) => Project;
+  addProject: (domain: string, name?: string, locationCode?: number, locationName?: string) => Project;
   deleteProject: (id: string) => void;
+  updateProject: (id: string, patch: Partial<Project>) => Project | null;
   refreshProjects: () => void;
 };
 
@@ -37,8 +38,8 @@ export function ProjectsProvider({ children }: { children: React.ReactNode }) {
   const currentProject = currentProjectId ? getProjectById(currentProjectId) ?? null : null;
 
   const addProject = React.useCallback(
-    (domain: string, name?: string) => {
-      const project = addProjectStorage(domain, name);
+    (domain: string, name?: string, locationCode?: number, locationName?: string) => {
+      const project = addProjectStorage(domain, name, locationCode, locationName);
       setProjects(getProjects());
       return project;
     },
@@ -56,6 +57,12 @@ export function ProjectsProvider({ children }: { children: React.ReactNode }) {
     [currentProjectId, router]
   );
 
+  const updateProject = React.useCallback((id: string, patch: Partial<Project>) => {
+    const updated = updateProjectStorage(id, patch);
+    setProjects(getProjects());
+    return updated;
+  }, []);
+
   const value = React.useMemo<ProjectsContextValue>(
     () => ({
       projects,
@@ -63,9 +70,10 @@ export function ProjectsProvider({ children }: { children: React.ReactNode }) {
       currentProject,
       addProject,
       deleteProject,
+      updateProject,
       refreshProjects,
     }),
-    [projects, currentProjectId, currentProject, addProject, deleteProject, refreshProjects]
+    [projects, currentProjectId, currentProject, addProject, deleteProject, updateProject, refreshProjects]
   );
 
   return <ProjectsContext.Provider value={value}>{children}</ProjectsContext.Provider>;

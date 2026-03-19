@@ -38,13 +38,8 @@ export function Sidebar({
 }) {
   const pathname = usePathname();
   const { projects, currentProject } = useProjects();
-  const [mounted, setMounted] = useState(false);
   const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
   const projectDropdownRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -63,8 +58,8 @@ export function Sidebar({
         ? pathname.replace(`/p/${projectId}`, "").split("/")[1] || "keywords"
         : "keywords";
 
-  const projectLabel = mounted && currentProject ? currentProject.name : `Project: ${projectId}`;
-  const projectTitle = mounted && currentProject ? currentProject.domain : undefined;
+  const projectLabel = currentProject ? currentProject.name : `Project: ${projectId}`;
+  const projectTitle = currentProject ? currentProject.domain : undefined;
 
   if (collapsed) {
     return (

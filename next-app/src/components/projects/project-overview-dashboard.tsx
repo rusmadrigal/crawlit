@@ -358,7 +358,7 @@ const overviewActions = [
 ] as const;
 
 export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
-  const { projects, deleteProject } = useProjects();
+  const { projects, deleteProject, updateProject } = useProjects();
   const project = projects.find((p) => p.id === projectId);
   const [overviewData, setOverviewData] = useState<OverviewData>(null);
   const [overviewLoading, setOverviewLoading] = useState(false);
@@ -379,17 +379,24 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
   const [keywordDropdownOpen, setKeywordDropdownOpen] = useState(false);
   const [keywordFilterDraft, setKeywordFilterDraft] = useState<{ operator: string; value: string; matchMode: "all" | "any" }>({ operator: "contains", value: "", matchMode: "any" });
   const keywordDropdownRef = useRef<HTMLDivElement>(null);
+  const [ga4Loading, setGa4Loading] = useState(false);
+  const [ga4Error, setGa4Error] = useState<string | null>(null);
+  const [ga4Properties, setGa4Properties] = useState<{ propertyId: string; displayName: string }[]>([]);
 
   const locationCode = project?.locationCode ?? DEFAULT_LOCATION_CODE;
 
   const fetchOverview = useCallback(
-    async (refresh = false) => {
+    async (refresh = false, granularityOverride?: "daily" | "monthly", timeRangeOverride?: "12m" | "2y") => {
       if (!project?.domain) return;
+      const gran = granularityOverride ?? perfGranularity;
+      const range = timeRangeOverride ?? perfTimeRange;
       if (refresh) setRefreshing(true);
       else setOverviewLoading(true);
       setOverviewError(null);
       try {
-        const url = `/api/domain-overview?domain=${encodeURIComponent(project.domain)}&location_code=${locationCode}${refresh ? "&refresh=1" : ""}`;
+        const gaParam = project?.ga4PropertyId ? `&ga4_property_id=${encodeURIComponent(project.ga4PropertyId)}` : "";
+        const granParam = gran === "daily" ? `&granularity=daily&days=${range === "2y" ? 365 : 90}` : "";
+        const url = `/api/domain-overview?domain=${encodeURIComponent(project.domain)}&location_code=${locationCode}${refresh ? "&refresh=1" : ""}${gaParam}${granParam}`;
         const res = await fetch(url);
         const data = await res.json();
         if (!res.ok) {
@@ -415,8 +422,29 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
         setRefreshing(false);
       }
     },
-    [project?.domain, locationCode]
+    [project?.domain, project?.ga4PropertyId, locationCode, perfGranularity, perfTimeRange]
   );
+
+
+  const fetchGa4Properties = useCallback(async () => {
+    setGa4Loading(true);
+    setGa4Error(null);
+    try {
+      const res = await fetch("/api/ga4/properties");
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        setGa4Error(data?.error ?? "Failed to load GA4 properties");
+        setGa4Properties([]);
+        return;
+      }
+      setGa4Properties(Array.isArray(data.properties) ? data.properties : []);
+    } catch {
+      setGa4Error("Failed to load GA4 properties");
+      setGa4Properties([]);
+    } finally {
+      setGa4Loading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (project?.domain) fetchOverview();
@@ -468,6 +496,59 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {project?.domain && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setGa4Error(null);
+                  fetchGa4Properties();
+                }}
+                disabled={ga4Loading}
+                className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors disabled:opacity-50"
+                style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                title="Connect GA4 and select a property for this project"
+              >
+                {ga4Loading ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+                GA4
+              </button>
+              {ga4Properties.length > 0 && (
+                <select
+                  value={project.ga4PropertyId ?? ""}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    const prop = ga4Properties.find((p) => p.propertyId === value);
+                    updateProject(projectId, {
+                      ga4PropertyId: value || undefined,
+                      ga4PropertyName: prop?.displayName || undefined,
+                    });
+                    // refresh overview to use GA4 traffic
+                    fetchOverview(true);
+                  }}
+                  className="rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+                  style={{ borderColor: "var(--border)", backgroundColor: "var(--input-bg)", color: "var(--foreground)" }}
+                  title="GA4 property for this project"
+                >
+                  <option value="">Select GA4 property…</option>
+                  {ga4Properties.map((p) => (
+                    <option key={p.propertyId} value={p.propertyId}>
+                      {p.displayName}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {!ga4Loading && ga4Properties.length === 0 && (
+                <a
+                  href={`/api/ga4/oauth/start?redirect_to=${encodeURIComponent(`/p/${projectId}`)}`}
+                  className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors hover:bg-[var(--muted-bg)]"
+                  style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                  title="Connect Google Analytics (GA4)"
+                >
+                  Connect GA4
+                </a>
+              )}
+            </div>
+          )}
+          {project?.domain && (
             <button
               type="button"
               onClick={() => fetchOverview(true)}
@@ -496,6 +577,11 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
           )}
         </div>
       </div>
+      {ga4Error && (
+        <p className="text-sm" style={{ color: "var(--muted)" }} role="alert">
+          {ga4Error}
+        </p>
+      )}
 
       {/* Summary cards row */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -669,7 +755,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                     <option value="2y">Last 2 years</option>
                   </select>
                 </div>
-                <div className="rounded border px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", color: "var(--foreground)" }} title="DataForSEO only provides monthly data">
+                <div className="rounded border px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)", color: "var(--foreground)" }} title={project?.ga4PropertyId ? "GA4 Organic Search by day" : "Connect GA4 to see daily sessions"}>
                   <select
                     value={perfGranularity}
                     onChange={(e) => setPerfGranularity(e.target.value as "daily" | "monthly")}
@@ -677,7 +763,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                     style={{ color: "var(--foreground)" }}
                   >
                     <option value="monthly">Monthly</option>
-                    <option value="daily">Daily (monthly data)</option>
+                    <option value="daily">Daily</option>
                   </select>
                 </div>
                 <button
@@ -706,8 +792,9 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                             },
                           ];
                         })()) as HistoryPoint[];
+                    const isDailyExport = chartData.length > 0 && chartData[0]?.date?.length === 10;
                     const cutoff = perfTimeRange === "2y" ? 24 : 12;
-                    const filtered = chartData.slice(-cutoff);
+                    const filtered = isDailyExport ? chartData : chartData.slice(-cutoff);
                     const header = "date,organic_pages,organic_traffic\n";
                     const rows = filtered.map((d) => `${d.date},${d.organicPages},${d.organicTraffic}`).join("\n");
                     const blob = new Blob([header + rows], { type: "text/csv" });
@@ -752,10 +839,13 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                   organicKeywords: p.organicKeywords ?? overviewData.keywordCount ?? undefined,
                 }));
               }
+              const isDaily = perfGranularity === "daily" && chartData.length > 0 && chartData[0]?.date?.length === 10;
               const formatDate = (d: string) => {
-                const [y, m] = d.split("-");
+                const parts = d.split("-");
                 const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-                return `${months[Number(m) - 1]} ${y}`;
+                if (parts.length >= 3 && isDaily) return `${months[Number(parts[1]) - 1]} ${Number(parts[2])}`;
+                if (parts.length >= 2) return `${months[Number(parts[1]) - 1]} ${parts[0]}`;
+                return d;
               };
 
               if (chartData.length === 0) {
@@ -776,7 +866,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
               }
 
               const monthsBack = perfTimeRange === "2y" ? 24 : 12;
-              const filtered = [...chartData].slice(-monthsBack);
+              const filtered = isDaily ? [...chartData] : [...chartData].slice(-monthsBack);
               const maxPages = Math.max(1, ...filtered.map((r) => r.organicPages));
               const maxKeywords = Math.max(0, ...filtered.map((r) => r.organicKeywords ?? 0));
               const maxLeft = Math.max(maxPages, maxKeywords);
@@ -796,6 +886,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                         tickFormatter={formatDate}
                         axisLine={{ stroke: "var(--border)" }}
                         tickLine={{ stroke: "var(--border)" }}
+                        interval={isDaily ? Math.max(0, Math.floor(filtered.length / 10)) : 0}
                       />
                       <YAxis
                         yAxisId="left"
@@ -826,10 +917,17 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                         }}
                         labelStyle={{ color: "var(--foreground)", fontWeight: 600 }}
                         labelFormatter={(label) => formatDate(label)}
-                        formatter={(value: number, name: string) => [
-                          name === "organicTraffic" && value >= 1000 ? `${(value / 1000).toFixed(1)}K` : value,
-                          name === "organicPages" ? "Organic pages" : name === "organicTraffic" ? "Organic traffic" : "Organic keywords",
-                        ]}
+                        formatter={(value, name) => {
+                          const n = Number(value ?? 0);
+                          const label =
+                            name === "organicPages"
+                              ? "Organic pages"
+                              : name === "organicTraffic"
+                                ? "Organic traffic"
+                                : "Organic keywords";
+                          const shown = name === "organicTraffic" && n >= 1000 ? `${(n / 1000).toFixed(1)}K` : n;
+                          return [shown, label];
+                        }}
                       />
                       {showOrganicPages && (
                         <Line
@@ -869,7 +967,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                 </div>
                 {perfGranularity === "daily" && (
                   <p className="mt-2 text-xs" style={{ color: "var(--muted)" }}>
-                    Data is in monthly resolution; DataForSEO does not provide a daily series.
+                    {isDaily ? "GA4 Organic Search sessions by day." : "Connect GA4 to see daily sessions."}
                   </p>
                 )}
                 {(!rawHistory || rawHistory.length === 0) && chartData.length > 0 ? (

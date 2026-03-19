@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Sidebar } from "@/components/layout/sidebar";
 import { TopBar } from "@/components/layout/top-bar";
 import { BannerApiKey } from "@/components/layout/banner-api-key";
@@ -14,18 +14,10 @@ export function ProjectLayoutClient({
   projectId: string;
   children: React.ReactNode;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
-    if (!mounted) return;
-    const raw = localStorage.getItem(STORAGE_KEY);
-    setCollapsed(raw === "1");
-  }, [mounted]);
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem(STORAGE_KEY) === "1";
+  });
 
   const toggleCollapsed = () => {
     setCollapsed((prev) => {
@@ -39,12 +31,12 @@ export function ProjectLayoutClient({
     <div className="flex min-h-screen" style={{ backgroundColor: "var(--background)" }}>
       <Sidebar
         projectId={projectId}
-        collapsed={mounted ? collapsed : false}
+        collapsed={collapsed}
         onToggleCollapsed={toggleCollapsed}
       />
       <div
         className="flex flex-1 flex-col transition-[padding] duration-200 ease-out"
-        style={{ paddingLeft: mounted && collapsed ? "3rem" : "16rem" }}
+        style={{ paddingLeft: collapsed ? "3rem" : "16rem" }}
       >
         <TopBar projectId={projectId} />
         <BannerApiKey showWarning={false} showError={false} />

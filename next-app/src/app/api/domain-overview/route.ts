@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { isDataforseoConfigured, fetchKeywordsForSite, fetchHistoricalRankOverview, fetchRankedKeywords, fetchSearchIntent } from "@/lib/dataforseo";
 import { getOverviewCached, setOverviewCached, invalidateOverviewCache } from "@/lib/overview-cache";
 import { DEFAULT_LOCATION_CODE } from "@/lib/locations";
+import { fetchGa4OrganicSessionsDaily, fetchGa4OrganicSessionsMonthly, getAccessTokenFromRefreshToken, getGa4RefreshToken } from "@/lib/ga4";
 
 export type DomainOverviewApiResponse = {
   ok: boolean;
@@ -26,6 +27,10 @@ export async function GET(request: NextRequest) {
   const domain = searchParams.get("domain")?.trim();
   const refresh = searchParams.get("refresh") === "1" || searchParams.get("refresh") === "true";
   const locationCode = Math.floor(Number(searchParams.get("location_code")) || DEFAULT_LOCATION_CODE);
+  const ga4PropertyId = searchParams.get("ga4_property_id")?.trim() || null;
+  const granularity = (searchParams.get("granularity")?.trim() || "monthly") as "monthly" | "daily";
+  const daysParam = searchParams.get("days");
+  const days = Math.min(366, Math.max(1, Math.floor(Number(daysParam)) || 90));
 
   if (!domain) {
     return Response.json(
@@ -44,7 +49,8 @@ export async function GET(request: NextRequest) {
     invalidateOverviewCache(domain, locationCode);
   }
 
-  const cached = getOverviewCached<DomainOverviewApiResponse>(domain, locationCode);
+  const useCache = granularity === "monthly";
+  const cached = useCache ? getOverviewCached<DomainOverviewApiResponse>(domain, locationCode) : null;
   if (!refresh && cached && cached.keywordCount !== undefined) {
     return Response.json({ ...cached, cached: true });
   }
@@ -92,11 +98,59 @@ export async function GET(request: NextRequest) {
             intent: null as string | null,
           }));
 
-    let history = visibilityResult.history ?? [];
+    let history: NonNullable<DomainOverviewApiResponse["history"]> = (visibilityResult.history ?? []) as NonNullable<DomainOverviewApiResponse["history"]>;
     if (history.length > 0 && keywordsResult.keywordCount != null) {
       history = [...history];
       const last = history[history.length - 1];
       history[history.length - 1] = { ...last, organicKeywords: keywordsResult.keywordCount };
+    }
+
+    // Replace organicTraffic with GA4 Organic Search sessions when GA4 is connected.
+    let ga4TrafficError: string | undefined = undefined;
+    if (ga4PropertyId) {
+      try {
+        const refreshToken = await getGa4RefreshToken();
+        if (refreshToken) {
+          const accessToken = await getAccessTokenFromRefreshToken(refreshToken);
+          const lastOrganicCount = visibilityResult.organicCount ?? 0;
+          const lastKeywordCount = keywordsResult.keywordCount ?? 0;
+          if (granularity === "daily") {
+            const gaDaily = await fetchGa4OrganicSessionsDaily({
+              accessToken,
+              propertyId: ga4PropertyId,
+              days,
+            });
+            history = gaDaily.map((r) => ({
+              date: r.date,
+              organicPages: lastOrganicCount,
+              organicTraffic: r.sessions,
+              organicKeywords: lastKeywordCount,
+            }));
+          } else {
+            // Request Organic Search sessions without country filter so the chart matches
+            // GA4 "Traffic acquisition > Session primary channel group = Organic Search" (all countries).
+            const gaSeries = await fetchGa4OrganicSessionsMonthly({
+              accessToken,
+              propertyId: ga4PropertyId,
+              months: 24,
+            });
+            const gaByDate = new Map(gaSeries.map((r) => [r.date, r.sessions]));
+            if (history.length > 0) {
+              history = history.map((p) => ({
+                ...p,
+                organicTraffic: gaByDate.get(p.date) ?? 0,
+              }));
+            } else {
+              history = gaSeries.map((r) => ({ date: r.date, organicPages: 0, organicTraffic: r.sessions }));
+            }
+          }
+        }
+      } catch (gaErr) {
+        ga4TrafficError = gaErr instanceof Error ? gaErr.message : "Failed to load GA4 traffic";
+      }
+    } else if (granularity === "daily") {
+      history = [];
+      ga4TrafficError = "Connect GA4 to see daily Organic Search sessions.";
     }
     const payload: DomainOverviewApiResponse = {
       ok: true,
@@ -105,13 +159,13 @@ export async function GET(request: NextRequest) {
       visibilityEtv: visibilityResult.visibilityEtv,
       organicCount: visibilityResult.organicCount,
       history,
-      historyError: visibilityResult.historyError,
+      historyError: visibilityResult.historyError || ga4TrafficError,
       keywordCount: keywordsResult.keywordCount,
       totalSearchVolume: keywordsResult.totalSearchVolume,
       topKeywords,
       cached: false,
     };
-    setOverviewCached(domain, payload, undefined, locationCode);
+    if (useCache) setOverviewCached(domain, payload, undefined, locationCode);
     return Response.json(payload);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to fetch domain overview";
