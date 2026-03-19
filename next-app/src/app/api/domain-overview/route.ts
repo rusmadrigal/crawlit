@@ -49,54 +49,92 @@ export async function GET(request: NextRequest) {
     invalidateOverviewCache(domain, locationCode);
   }
 
-  const useCache = granularity === "monthly";
-  const cached = useCache ? getOverviewCached<DomainOverviewApiResponse>(domain, locationCode) : null;
-  if (!refresh && cached && cached.keywordCount !== undefined) {
-    return Response.json({ ...cached, cached: true });
+  // Always try monthly cache first: for daily view we reuse it and only fetch GA4 (saves DataForSEO calls).
+  const cachedMonthly = getOverviewCached<DomainOverviewApiResponse>(domain, locationCode);
+  const useCacheForResponse = granularity === "monthly" && !refresh && cachedMonthly?.keywordCount !== undefined;
+
+  if (useCacheForResponse && cachedMonthly) {
+    return Response.json({ ...cachedMonthly, cached: true });
   }
 
   try {
-    const [keywordsResult, visibilityResult, rankedRows] = await Promise.all([
-      fetchKeywordsForSite(domain, locationCode),
-      fetchHistoricalRankOverview(domain, locationCode).then((r) => ({ ...r, historyError: undefined as string | undefined })).catch((err) => ({
-        visibilityEtv: null as number | null,
-        organicCount: null as number | null,
-        history: [] as { date: string; organicPages: number; organicTraffic: number; organicKeywords?: number }[],
-        historyError: err instanceof Error ? err.message : "Failed to load historical data",
-      })),
-      fetchRankedKeywords(domain, locationCode).catch(() => [] as { keyword: string; searchVolume: number; cpc: number | null; position: number | null; url: string | null; keywordDifficulty: number | null; intent: string | null }[]),
-    ]);
+    let keywordsResult: Awaited<ReturnType<typeof fetchKeywordsForSite>>;
+    let visibilityResult: { visibilityEtv: number | null; organicCount: number | null; history?: { date: string; organicPages: number; organicTraffic: number }[]; historyError?: string };
+    let rankedRows: Awaited<ReturnType<typeof fetchRankedKeywords>>;
+    let topKeywords: DomainOverviewApiResponse["topKeywords"];
 
-    let intentByKeyword: Record<string, string> = {};
-    if (rankedRows.length > 0) {
-      const needIntent = rankedRows.filter((r) => !r.intent?.trim()).map((r) => r.keyword);
-      if (needIntent.length > 0) {
-        try {
-          intentByKeyword = await fetchSearchIntent(needIntent, "en");
-        } catch {
-          // keep empty map
-        }
-      }
+    if (granularity === "daily" && !refresh && cachedMonthly && cachedMonthly.keywordCount !== undefined) {
+      // Reuse cached monthly data — no DataForSEO calls. Only GA4 daily will be fetched below for history.
+      keywordsResult = {
+        keywordCount: cachedMonthly.keywordCount,
+        totalSearchVolume: cachedMonthly.totalSearchVolume ?? 0,
+        topKeywords: cachedMonthly.topKeywords ?? [],
+      };
+      visibilityResult = {
+        visibilityEtv: cachedMonthly.visibilityEtv ?? null,
+        organicCount: cachedMonthly.organicCount ?? null,
+        history: [],
+        historyError: undefined,
+      };
+      rankedRows = (cachedMonthly.topKeywords ?? []).map((k) => ({
+        keyword: k.keyword,
+        searchVolume: k.searchVolume,
+        cpc: k.cpc ?? null,
+        position: k.position ?? null,
+        url: k.url ?? null,
+        keywordDifficulty: k.keywordDifficulty ?? null,
+        intent: k.intent ?? null,
+      }));
+      topKeywords = cachedMonthly.topKeywords;
+    } else {
+      const [kwResult, visResult, ranked] = await Promise.all([
+        fetchKeywordsForSite(domain, locationCode),
+        fetchHistoricalRankOverview(domain, locationCode).then((r) => ({ ...r, historyError: undefined as string | undefined })).catch((err) => ({
+          visibilityEtv: null as number | null,
+          organicCount: null as number | null,
+          history: [] as { date: string; organicPages: number; organicTraffic: number; organicKeywords?: number }[],
+          historyError: err instanceof Error ? err.message : "Failed to load historical data",
+        })),
+        fetchRankedKeywords(domain, locationCode).catch(() => [] as { keyword: string; searchVolume: number; cpc: number | null; position: number | null; url: string | null; keywordDifficulty: number | null; intent: string | null }[]),
+      ]);
+      keywordsResult = kwResult;
+      visibilityResult = visResult;
+      rankedRows = ranked;
+      topKeywords = undefined; // will be computed below from rankedRows
     }
 
-    const topKeywords =
-      rankedRows.length > 0
-        ? rankedRows.map((r) => ({
-            keyword: r.keyword,
-            searchVolume: r.searchVolume,
-            cpc: r.cpc,
-            position: r.position,
-            url: r.url,
-            keywordDifficulty: r.keywordDifficulty ?? null,
-            intent: (r.intent?.trim() || intentByKeyword[r.keyword] || intentByKeyword[r.keyword.toLowerCase()] || null) as string | null,
-          }))
-        : (keywordsResult.topKeywords ?? []).map((k) => ({
-            ...k,
-            position: null as number | null,
-            url: null as string | null,
-            keywordDifficulty: null as number | null,
-            intent: null as string | null,
-          }));
+    const usedCachedForDaily = granularity === "daily" && !refresh && cachedMonthly?.keywordCount !== undefined;
+    if (!usedCachedForDaily) {
+      let intentByKeyword: Record<string, string> = {};
+      if (rankedRows.length > 0) {
+        const needIntent = rankedRows.filter((r) => !r.intent?.trim()).map((r) => r.keyword);
+        if (needIntent.length > 0) {
+          try {
+            intentByKeyword = await fetchSearchIntent(needIntent, "en");
+          } catch {
+            // keep empty map
+          }
+        }
+      }
+      topKeywords =
+        rankedRows.length > 0
+          ? rankedRows.map((r) => ({
+              keyword: r.keyword,
+              searchVolume: r.searchVolume,
+              cpc: r.cpc,
+              position: r.position,
+              url: r.url,
+              keywordDifficulty: r.keywordDifficulty ?? null,
+              intent: (r.intent?.trim() || intentByKeyword[r.keyword] || intentByKeyword[r.keyword.toLowerCase()] || null) as string | null,
+            }))
+          : (keywordsResult.topKeywords ?? []).map((k) => ({
+              ...k,
+              position: null as number | null,
+              url: null as string | null,
+              keywordDifficulty: null as number | null,
+              intent: null as string | null,
+            }));
+    }
 
     let history: NonNullable<DomainOverviewApiResponse["history"]> = (visibilityResult.history ?? []) as NonNullable<DomainOverviewApiResponse["history"]>;
     if (history.length > 0 && keywordsResult.keywordCount != null) {
@@ -162,10 +200,29 @@ export async function GET(request: NextRequest) {
       historyError: visibilityResult.historyError || ga4TrafficError,
       keywordCount: keywordsResult.keywordCount,
       totalSearchVolume: keywordsResult.totalSearchVolume,
-      topKeywords,
+      topKeywords: topKeywords ?? [],
       cached: false,
     };
-    if (useCache) setOverviewCached(domain, payload, undefined, locationCode);
+    // After any full fetch, cache monthly data so daily view can reuse it (saves DataForSEO calls).
+    if (!usedCachedForDaily) {
+      const toCache: DomainOverviewApiResponse =
+        granularity === "monthly"
+          ? payload
+          : {
+              ...payload,
+              history: (() => {
+                const h = (visibilityResult.history ?? []) as NonNullable<DomainOverviewApiResponse["history"]>;
+                if (h.length > 0 && keywordsResult.keywordCount != null) {
+                  const out = [...h];
+                  const last = out[out.length - 1];
+                  out[out.length - 1] = { ...last, organicKeywords: keywordsResult.keywordCount };
+                  return out;
+                }
+                return h;
+              })(),
+            };
+      setOverviewCached(domain, toCache, undefined, locationCode);
+    }
     return Response.json(payload);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to fetch domain overview";

@@ -2,9 +2,9 @@
  * In-memory cache for domain overview data with TTL.
  * Key = domain (normalized) + locationCode so data is per country.
  * Only used on the server (API routes).
+ * Longer TTL reduces DataForSEO API usage (fewer repeated calls).
  */
-
-const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 type CacheEntry<T> = { data: T; expiresAt: number };
 

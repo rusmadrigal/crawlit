@@ -33,6 +33,7 @@ import {
 import { useProjects } from "@/components/providers/projects-provider";
 import { DEFAULT_LOCATION_CODE } from "@/lib/locations";
 import { cn } from "@/lib/utils";
+import type { PerformanceNote } from "@/types/project";
 
 /** Mini sparkline for ranking history. Click opens modal with history. */
 function RankingHistorySparkline({
@@ -158,6 +159,216 @@ function RankingHistoryModal({
             <p className="text-sm" style={{ color: "var(--muted)" }}>
               No ranking history data yet. History will appear when position tracking data is available.
             </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Modal: Add and manage Performance chart notes (date, rich text, resource link). */
+function PerformanceNotesModal({
+  open,
+  onClose,
+  notes,
+  onSave,
+}: {
+  open: boolean;
+  onClose: () => void;
+  notes: PerformanceNote[];
+  onSave: (notes: PerformanceNote[]) => void;
+}) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [formDate, setFormDate] = useState("");
+  const [formContent, setFormContent] = useState("");
+  const [formResourceUrl, setFormResourceUrl] = useState("");
+  const contentEditableRef = useRef<HTMLDivElement>(null);
+
+  const resetForm = useCallback(() => {
+    setFormDate("");
+    setFormContent("");
+    setFormResourceUrl("");
+    if (contentEditableRef.current) {
+      contentEditableRef.current.innerHTML = "";
+    }
+    setAddOpen(false);
+    setEditingId(null);
+  }, []);
+
+  const handleSaveNote = useCallback(() => {
+    const content = contentEditableRef.current?.innerHTML?.trim() || formContent;
+    if (!formDate.trim()) return;
+    const resourceUrl = formResourceUrl.trim() || undefined;
+    if (editingId) {
+      const next = notes.map((n) =>
+        n.id === editingId ? { ...n, date: formDate, content: content || n.content, resourceUrl } : n
+      );
+      onSave(next);
+    } else {
+      const newNote: PerformanceNote = {
+        id: crypto.randomUUID(),
+        date: formDate,
+        content: content || "<p></p>",
+        resourceUrl,
+        createdAt: new Date().toISOString(),
+      };
+      onSave([...notes, newNote]);
+    }
+    resetForm();
+  }, [editingId, formDate, formContent, formResourceUrl, notes, onSave, resetForm]);
+
+  const handleDelete = useCallback(
+    (id: string) => {
+      onSave(notes.filter((n) => n.id !== id));
+      if (editingId === id) resetForm();
+    },
+    [notes, onSave, editingId, resetForm]
+  );
+
+  const setBold = useCallback(() => document.execCommand("bold", false), []);
+  const setItalic = useCallback(() => document.execCommand("italic", false), []);
+  const setLink = useCallback(() => {
+    const url = window.prompt("Link URL:", "https://");
+    if (url?.trim()) document.execCommand("createLink", false, url.trim());
+  }, []);
+
+  if (!open) return null;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="performance-notes-title"
+    >
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} aria-hidden />
+      <div
+        className="relative flex max-h-[90vh] w-full max-w-lg flex-col rounded-xl border shadow-lg"
+        style={{ backgroundColor: "var(--card)", borderColor: "var(--card-border)" }}
+      >
+        <div className="flex items-center justify-between border-b p-4" style={{ borderColor: "var(--border)" }}>
+          <h3 id="performance-notes-title" className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
+            Performance notes
+          </h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded p-1 transition-colors hover:bg-[var(--muted-bg)]"
+            aria-label="Close"
+          >
+            <span className="text-xl leading-none" style={{ color: "var(--muted)" }}>×</span>
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4">
+          <ul className="space-y-3">
+            {notes.map((n) => (
+              <li
+                key={n.id}
+                className="rounded-lg border p-3"
+                style={{ borderColor: "var(--border)", backgroundColor: "var(--muted-bg)" }}
+              >
+                {editingId === n.id ? (
+                  <>
+                    <div className="mb-2 flex items-center gap-2">
+                      <input
+                        type="date"
+                        value={formDate}
+                        onChange={(e) => setFormDate(e.target.value)}
+                        className="rounded border px-2 py-1 text-sm"
+                        style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                      />
+                      <button type="button" onClick={() => handleSaveNote()} className="rounded bg-[var(--primary)] px-3 py-1 text-sm text-white">Save</button>
+                      <button type="button" onClick={() => { setEditingId(null); resetForm(); }} className="rounded border px-3 py-1 text-sm" style={{ borderColor: "var(--border)" }}>Cancel</button>
+                    </div>
+                    <div className="mb-2 flex gap-1 border-b pb-2" style={{ borderColor: "var(--border)" }}>
+                      <button type="button" onClick={setBold} className="rounded border px-2 py-1 text-xs font-bold" style={{ borderColor: "var(--border)" }}>B</button>
+                      <button type="button" onClick={setItalic} className="rounded border px-2 py-1 text-xs italic" style={{ borderColor: "var(--border)" }}>I</button>
+                      <button type="button" onClick={setLink} className="rounded border px-2 py-1 text-xs" style={{ borderColor: "var(--border)" }}>Link</button>
+                    </div>
+                    <div
+                      ref={contentEditableRef}
+                      contentEditable
+                      className="min-h-[80px] rounded border p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
+                      style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                      dangerouslySetInnerHTML={{ __html: n.content }}
+                      suppressContentEditableWarning
+                    />
+                    <input
+                      type="url"
+                      placeholder="Resource link (URL)"
+                      value={formResourceUrl}
+                      onChange={(e) => setFormResourceUrl(e.target.value)}
+                      className="mt-2 w-full rounded border px-2 py-1 text-sm"
+                      style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium" style={{ color: "var(--foreground)" }}>{n.date}</span>
+                      <span className="flex gap-1">
+                        <button type="button" onClick={() => { setAddOpen(false); setEditingId(n.id); setFormDate(n.date); setFormContent(n.content); setFormResourceUrl(n.resourceUrl ?? ""); }} className="rounded border px-2 py-0.5 text-xs" style={{ borderColor: "var(--border)" }}>Edit</button>
+                        <button type="button" onClick={() => handleDelete(n.id)} className="rounded border px-2 py-0.5 text-xs text-red-600" style={{ borderColor: "var(--border)" }}>Delete</button>
+                      </span>
+                    </div>
+                    <div className="mt-1 text-sm" style={{ color: "var(--muted)" }} dangerouslySetInnerHTML={{ __html: n.content }} />
+                    {n.resourceUrl && (
+                      <a href={n.resourceUrl} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1 text-xs text-[var(--primary)] underline">
+                        <Link2 className="size-3" /> Resource
+                      </a>
+                    )}
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+          {!addOpen && (
+            <button
+              type="button"
+              onClick={() => { setEditingId(null); setAddOpen(true); setFormDate(new Date().toISOString().slice(0, 10)); setFormContent(""); setFormResourceUrl(""); }}
+              className="mt-4 inline-flex items-center gap-2 rounded border px-3 py-2 text-sm font-medium transition-colors hover:bg-[var(--muted-bg)]"
+              style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+            >
+              <MessageSquare className="size-4" /> Add note
+            </button>
+          )}
+          {addOpen && (
+            <div className="mt-4 rounded-lg border p-4" style={{ borderColor: "var(--border)", backgroundColor: "var(--muted-bg)" }}>
+              <label className="mb-2 block text-sm font-medium" style={{ color: "var(--foreground)" }}>Date</label>
+              <input
+                type="date"
+                value={formDate}
+                onChange={(e) => setFormDate(e.target.value)}
+                className="mb-3 w-full rounded border px-2 py-1.5 text-sm"
+                style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+              />
+              <label className="mb-2 block text-sm font-medium" style={{ color: "var(--foreground)" }}>Content (rich text)</label>
+              <div className="mb-2 flex gap-1" style={{ borderColor: "var(--border)" }}>
+                <button type="button" onClick={setBold} className="rounded border px-2 py-1 text-xs font-bold" style={{ borderColor: "var(--border)" }}>B</button>
+                <button type="button" onClick={setItalic} className="rounded border px-2 py-1 text-xs italic" style={{ borderColor: "var(--border)" }}>I</button>
+                <button type="button" onClick={setLink} className="rounded border px-2 py-1 text-xs" style={{ borderColor: "var(--border)" }}>Link</button>
+              </div>
+              <div
+                ref={contentEditableRef}
+                contentEditable
+                className="min-h-[100px] rounded border p-3 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
+                style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                suppressContentEditableWarning
+              />
+              <label className="mt-3 mb-1 block text-sm font-medium" style={{ color: "var(--foreground)" }}>Resource (link)</label>
+              <input
+                type="url"
+                placeholder="https://..."
+                value={formResourceUrl}
+                onChange={(e) => setFormResourceUrl(e.target.value)}
+                className="w-full rounded border px-2 py-1.5 text-sm"
+                style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+              />
+              <div className="mt-3 flex gap-2">
+                <button type="button" onClick={handleSaveNote} className="rounded bg-[var(--primary)] px-4 py-2 text-sm font-medium text-white">Save note</button>
+                <button type="button" onClick={resetForm} className="rounded border px-4 py-2 text-sm" style={{ borderColor: "var(--border)" }}>Cancel</button>
+              </div>
+            </div>
           )}
         </div>
       </div>
@@ -382,6 +593,8 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
   const [ga4Loading, setGa4Loading] = useState(false);
   const [ga4Error, setGa4Error] = useState<string | null>(null);
   const [ga4Properties, setGa4Properties] = useState<{ propertyId: string; displayName: string }[]>([]);
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [chartNoteOpen, setChartNoteOpen] = useState<PerformanceNote | null>(null);
 
   const locationCode = project?.locationCode ?? DEFAULT_LOCATION_CODE;
 
@@ -768,9 +981,10 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                 </div>
                 <button
                   type="button"
+                  onClick={() => setNotesOpen(true)}
                   className="rounded border p-2 transition-colors hover:bg-[var(--muted-bg)]"
                   style={{ borderColor: "var(--border)" }}
-                  title="Notes"
+                  title="Add or view notes on the chart"
                   aria-label="Notes"
                 >
                   <MessageSquare className="size-4" style={{ color: "var(--muted)" }} aria-hidden />
@@ -867,6 +1081,17 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
 
               const monthsBack = perfTimeRange === "2y" ? 24 : 12;
               const filtered = isDaily ? [...chartData] : [...chartData].slice(-monthsBack);
+              // Use data size to decide note matching: many points = daily (match by date), few = monthly (match by month).
+              // So notes show in both views and while daily data is loading (we still have monthly points).
+              const chartHasDailyPoints = filtered.length > 31;
+              const notesForDate = (date: string) =>
+                (project?.performanceNotes ?? []).filter((n) =>
+                  chartHasDailyPoints ? n.date === date : `${n.date.slice(0, 7)}-01` === date
+                );
+              const filteredWithNotes = filtered.map((d) => {
+                const _notes = notesForDate(d.date);
+                return { ...d, _notes, noteY: _notes.length ? 0 : undefined };
+              });
               const maxPages = Math.max(1, ...filtered.map((r) => r.organicPages));
               const maxKeywords = Math.max(0, ...filtered.map((r) => r.organicKeywords ?? 0));
               const maxLeft = Math.max(maxPages, maxKeywords);
@@ -874,11 +1099,33 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
               const leftTicks = [0, Math.round(maxLeft / 2), maxLeft];
               const rightTicks = [0, Math.round(maxTraffic / 2), maxTraffic];
 
+              const NoteDot = (props: { cx?: number; cy?: number; payload?: { _notes?: PerformanceNote[] } }) => {
+                const { cx = 0, cy = 0, payload } = props;
+                const notes = payload?._notes;
+                if (!notes?.length) return null;
+                const note = notes[0];
+                const toggleNote = () => setChartNoteOpen((prev) => (prev?.id === note.id ? null : note));
+                return (
+                  <g
+                    transform={`translate(${cx}, ${cy})`}
+                    onClick={toggleNote}
+                    onKeyDown={(e) => e.key === "Enter" && toggleNote()}
+                    role="button"
+                    tabIndex={0}
+                    style={{ cursor: "pointer" }}
+                    aria-label={chartNoteOpen?.id === note.id ? `Close note for ${note.date}` : `Note for ${note.date}`}
+                  >
+                    <circle r={10} fill="var(--primary)" stroke="var(--card)" strokeWidth={2} />
+                    <text y={4} textAnchor="middle" fill="var(--card)" fontSize={10} fontWeight="bold">i</text>
+                  </g>
+                );
+              };
+
               return (
                 <>
                 <div className="h-[320px] w-full rounded-lg border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={filtered} margin={{ top: 16, right: 56, left: 48, bottom: 32 }}>
+                    <LineChart data={filteredWithNotes} margin={{ top: 16, right: 56, left: 48, bottom: 32 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                       <XAxis
                         dataKey="date"
@@ -962,9 +1209,48 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                           name="organicKeywords"
                         />
                       )}
+                      <Line
+                        type="monotone"
+                        dataKey="noteY"
+                        yAxisId="left"
+                        stroke="none"
+                        dot={<NoteDot />}
+                        connectNulls={false}
+                        name=""
+                        legendType="none"
+                        isAnimationActive={false}
+                      />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
+                {chartNoteOpen && (
+                  <div
+                    className="mt-3 rounded-lg border p-4"
+                    style={{ borderColor: "var(--border)", backgroundColor: "var(--muted-bg)" }}
+                    role="dialog"
+                    aria-label="Note"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium" style={{ color: "var(--muted)" }}>{chartNoteOpen.date}</p>
+                        <div className="mt-1 text-sm" style={{ color: "var(--foreground)" }} dangerouslySetInnerHTML={{ __html: chartNoteOpen.content }} />
+                        {chartNoteOpen.resourceUrl && (
+                          <a href={chartNoteOpen.resourceUrl} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1 text-sm text-[var(--primary)] underline">
+                            <Link2 className="size-3.5" /> Resource
+                          </a>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setChartNoteOpen(null)}
+                        className="shrink-0 rounded p-1.5 transition-colors hover:bg-[var(--border)]"
+                        aria-label="Close note"
+                      >
+                        <span className="text-lg leading-none" style={{ color: "var(--muted)" }}>×</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {perfGranularity === "daily" && (
                   <p className="mt-2 text-xs" style={{ color: "var(--muted)" }}>
                     {isDaily ? "GA4 Organic Search sessions by day." : "Connect GA4 to see daily sessions."}
@@ -983,6 +1269,13 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
           </CardContent>
         </Card>
       ) : null}
+
+      <PerformanceNotesModal
+        open={notesOpen}
+        onClose={() => setNotesOpen(false)}
+        notes={project?.performanceNotes ?? []}
+        onSave={(notes) => project?.id && updateProject(project.id, { performanceNotes: notes })}
+      />
 
       {/* Top keywords table */}
       {overviewData?.topKeywords && overviewData.topKeywords.length > 0 && (() => {
