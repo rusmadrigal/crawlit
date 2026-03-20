@@ -3,6 +3,7 @@ import { isDataforseoConfigured, fetchKeywordsForSite, fetchHistoricalRankOvervi
 import { getOverviewCached, setOverviewCached, invalidateOverviewCache } from "@/lib/overview-cache";
 import { DEFAULT_LOCATION_CODE } from "@/lib/locations";
 import { fetchGa4OrganicSessionsDaily, fetchGa4OrganicSessionsMonthly, getAccessTokenFromRefreshToken, getGa4RefreshToken } from "@/lib/ga4";
+import { mergeGscPagesIntoHistory } from "@/lib/gsc";
 
 export type DomainOverviewApiResponse = {
   ok: boolean;
@@ -28,6 +29,7 @@ export async function GET(request: NextRequest) {
   const refresh = searchParams.get("refresh") === "1" || searchParams.get("refresh") === "true";
   const locationCode = Math.floor(Number(searchParams.get("location_code")) || DEFAULT_LOCATION_CODE);
   const ga4PropertyId = searchParams.get("ga4_property_id")?.trim() || null;
+  const gscSiteUrl = searchParams.get("gsc_site_url")?.trim() || null;
   const granularity = (searchParams.get("granularity")?.trim() || "monthly") as "monthly" | "daily";
   const daysParam = searchParams.get("days");
   const days = Math.min(366, Math.max(1, Math.floor(Number(daysParam)) || 90));
@@ -53,8 +55,44 @@ export async function GET(request: NextRequest) {
   const cachedMonthly = getOverviewCached<DomainOverviewApiResponse>(domain, locationCode);
   const useCacheForResponse = granularity === "monthly" && !refresh && cachedMonthly?.keywordCount !== undefined;
 
-  if (useCacheForResponse && cachedMonthly) {
+  if (useCacheForResponse && cachedMonthly && !gscSiteUrl) {
     return Response.json({ ...cachedMonthly, cached: true });
+  }
+
+  async function tryMergeSearchConsolePages(payload: DomainOverviewApiResponse): Promise<string | undefined> {
+    if (!gscSiteUrl || !payload.history?.length) return undefined;
+    try {
+      const refreshToken = await getGa4RefreshToken();
+      if (!refreshToken) {
+        return "Search Console: connect Google (Connect GA4) and grant Search Console access.";
+      }
+      const accessToken = await getAccessTokenFromRefreshToken(refreshToken);
+      payload.history = await mergeGscPagesIntoHistory({
+        accessToken,
+        siteUrl: gscSiteUrl,
+        history: payload.history,
+        granularity,
+      });
+      return undefined;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Search Console request failed";
+      if (/403|insufficient|permission/i.test(msg)) {
+        return "Search Console: reconnect Google and approve Search Console (webmasters) permission.";
+      }
+      return `Search Console: ${msg}`;
+    }
+  }
+
+  if (useCacheForResponse && cachedMonthly && gscSiteUrl) {
+    const payload: DomainOverviewApiResponse = {
+      ...cachedMonthly,
+      history: cachedMonthly.history ? cachedMonthly.history.map((h) => ({ ...h })) : undefined,
+    };
+    const gscErr = await tryMergeSearchConsolePages(payload);
+    if (gscErr) {
+      payload.historyError = [payload.historyError, gscErr].filter(Boolean).join(" ");
+    }
+    return Response.json({ ...payload, cached: true });
   }
 
   try {
@@ -204,6 +242,7 @@ export async function GET(request: NextRequest) {
       cached: false,
     };
     // After any full fetch, cache monthly data so daily view can reuse it (saves DataForSEO calls).
+    // Clone before caching so Search Console merges below do not mutate the cached snapshot.
     if (!usedCachedForDaily) {
       const toCache: DomainOverviewApiResponse =
         granularity === "monthly"
@@ -221,7 +260,11 @@ export async function GET(request: NextRequest) {
                 return h;
               })(),
             };
-      setOverviewCached(domain, toCache, undefined, locationCode);
+      setOverviewCached(domain, structuredClone(toCache), undefined, locationCode);
+    }
+    const gscErr = await tryMergeSearchConsolePages(payload);
+    if (gscErr) {
+      payload.historyError = [payload.historyError, gscErr].filter(Boolean).join(" ");
     }
     return Response.json(payload);
   } catch (err) {

@@ -582,7 +582,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
   const [showOrganicTraffic, setShowOrganicTraffic] = useState(true);
   const [showOrganicKeywords, setShowOrganicKeywords] = useState(false);
   const [perfTimeRange, setPerfTimeRange] = useState<"12m" | "2y">("12m");
-  const [perfGranularity, setPerfGranularity] = useState<"daily" | "monthly">("monthly");
+  const [perfGranularity, setPerfGranularity] = useState<"daily" | "monthly">("daily");
   const [intentFilter, setIntentFilter] = useState<string[]>([]);
   const [intentDropdownOpen, setIntentDropdownOpen] = useState(false);
   const intentDropdownRef = useRef<HTMLDivElement>(null);
@@ -593,6 +593,9 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
   const [ga4Loading, setGa4Loading] = useState(false);
   const [ga4Error, setGa4Error] = useState<string | null>(null);
   const [ga4Properties, setGa4Properties] = useState<{ propertyId: string; displayName: string }[]>([]);
+  const [gscLoading, setGscLoading] = useState(false);
+  const [gscError, setGscError] = useState<string | null>(null);
+  const [gscSites, setGscSites] = useState<{ siteUrl: string }[]>([]);
   const [notesOpen, setNotesOpen] = useState(false);
   const [chartNoteOpen, setChartNoteOpen] = useState<PerformanceNote | null>(null);
 
@@ -608,8 +611,9 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
       setOverviewError(null);
       try {
         const gaParam = project?.ga4PropertyId ? `&ga4_property_id=${encodeURIComponent(project.ga4PropertyId)}` : "";
+        const gscParam = project?.gscSiteUrl ? `&gsc_site_url=${encodeURIComponent(project.gscSiteUrl)}` : "";
         const granParam = gran === "daily" ? `&granularity=daily&days=${range === "2y" ? 365 : 90}` : "";
-        const url = `/api/domain-overview?domain=${encodeURIComponent(project.domain)}&location_code=${locationCode}${refresh ? "&refresh=1" : ""}${gaParam}${granParam}`;
+        const url = `/api/domain-overview?domain=${encodeURIComponent(project.domain)}&location_code=${locationCode}${refresh ? "&refresh=1" : ""}${gaParam}${gscParam}${granParam}`;
         const res = await fetch(url);
         const data = await res.json();
         if (!res.ok) {
@@ -635,7 +639,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
         setRefreshing(false);
       }
     },
-    [project?.domain, project?.ga4PropertyId, locationCode, perfGranularity, perfTimeRange]
+    [project?.domain, project?.ga4PropertyId, project?.gscSiteUrl, locationCode, perfGranularity, perfTimeRange]
   );
 
 
@@ -658,6 +662,28 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
       setGa4Loading(false);
     }
   }, []);
+
+  const fetchGscSites = useCallback(async () => {
+    setGscLoading(true);
+    setGscError(null);
+    try {
+      const res = await fetch("/api/gsc/sites");
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        setGscError(data?.error ?? "Failed to load Search Console sites");
+        setGscSites([]);
+        return;
+      }
+      setGscSites(Array.isArray(data.sites) ? data.sites : []);
+    } catch {
+      setGscError("Failed to load Search Console sites");
+      setGscSites([]);
+    } finally {
+      setGscLoading(false);
+    }
+  }, []);
+
+  const pagesChartLabel = project?.gscSiteUrl ? "Page indexing (GSC)" : "Organic pages";
 
   useEffect(() => {
     if (project?.domain) fetchOverview();
@@ -751,13 +777,51 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
               )}
               {!ga4Loading && ga4Properties.length === 0 && (
                 <a
-                  href={`/api/ga4/oauth/start?redirect_to=${encodeURIComponent(`/p/${projectId}`)}`}
+                  href={`/api/ga4/oauth/start?redirect_to=${encodeURIComponent(`/p/${projectId}`)}&reauth=1`}
                   className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors hover:bg-[var(--muted-bg)]"
                   style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
-                  title="Connect Google Analytics (GA4)"
+                  title="Connect Google (GA4 + Search Console read access)"
                 >
-                  Connect GA4
+                  Connect Google
                 </a>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setGscError(null);
+                  fetchGscSites();
+                }}
+                disabled={gscLoading}
+                className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors disabled:opacity-50"
+                style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                title="Load Search Console properties (uses same Google sign-in)"
+              >
+                {gscLoading ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+                GSC
+              </button>
+              {gscSites.length > 0 && (
+                <select
+                  value={project.gscSiteUrl ?? ""}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    const site = gscSites.find((s) => s.siteUrl === value);
+                    updateProject(projectId, {
+                      gscSiteUrl: value || undefined,
+                      gscSiteLabel: site?.siteUrl || undefined,
+                    });
+                    fetchOverview(true);
+                  }}
+                  className="max-w-[220px] rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+                  style={{ borderColor: "var(--border)", backgroundColor: "var(--input-bg)", color: "var(--foreground)" }}
+                  title="Search Console property for page indexing in Performance chart"
+                >
+                  <option value="">Select GSC property…</option>
+                  {gscSites.map((s) => (
+                    <option key={s.siteUrl} value={s.siteUrl}>
+                      {s.siteUrl}
+                    </option>
+                  ))}
+                </select>
               )}
             </div>
           )}
@@ -793,6 +857,11 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
       {ga4Error && (
         <p className="text-sm" style={{ color: "var(--muted)" }} role="alert">
           {ga4Error}
+        </p>
+      )}
+      {gscError && (
+        <p className="text-sm" style={{ color: "var(--muted)" }} role="alert">
+          {gscError}
         </p>
       )}
 
@@ -932,7 +1001,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                     className="h-4 w-4 rounded border-[var(--border)]"
                     style={{ accentColor: "#2b76b9" }}
                   />
-                  <span className="text-sm font-medium" style={{ color: "#2b76b9" }}>Organic pages</span>
+                  <span className="text-sm font-medium" style={{ color: "#2b76b9" }}>{pagesChartLabel}</span>
                 </label>
                 <label className="inline-flex cursor-pointer items-center gap-2">
                   <input
@@ -1143,7 +1212,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                         ticks={leftTicks}
                         axisLine={false}
                         tickLine={{ stroke: "var(--border)" }}
-                        label={{ value: "Organic pages", angle: -90, position: "insideLeft", style: { fill: "#2b76b9", fontSize: 11 } }}
+                        label={{ value: pagesChartLabel, angle: -90, position: "insideLeft", style: { fill: "#2b76b9", fontSize: 11 } }}
                       />
                       <YAxis
                         yAxisId="right"
@@ -1168,7 +1237,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                           const n = Number(value ?? 0);
                           const label =
                             name === "organicPages"
-                              ? "Organic pages"
+                              ? pagesChartLabel
                               : name === "organicTraffic"
                                 ? "Organic traffic"
                                 : "Organic keywords";
@@ -1254,6 +1323,11 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                 {perfGranularity === "daily" && (
                   <p className="mt-2 text-xs" style={{ color: "var(--muted)" }}>
                     {isDaily ? "GA4 Organic Search sessions by day." : "Connect GA4 to see daily sessions."}
+                  </p>
+                )}
+                {project?.gscSiteUrl && (
+                  <p className="mt-2 text-xs" style={{ color: "var(--muted)" }}>
+                    Page indexing (GSC): count of distinct URLs with search impressions per period (Search Analytics API). Reconnect with &quot;Connect Google&quot; if GSC sites fail to load.
                   </p>
                 )}
                 {(!rawHistory || rawHistory.length === 0) && chartData.length > 0 ? (

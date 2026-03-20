@@ -1,14 +1,16 @@
 import { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
-import { buildGa4OauthUrl, GA4_COOKIE_NAMES, ga4CookieOptions, getGa4OauthEnvStatus } from "@/lib/ga4";
+import { buildGa4OauthUrl, GA4_COOKIE_NAMES, ga4CookieOptions, getGa4OauthEnvStatus, GOOGLE_OAUTH_SCOPES } from "@/lib/ga4";
 
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const redirectTo = url.searchParams.get("redirect_to") || "/";
+  /** Clear stored refresh token before Google redirect so re-consent cannot leave an old scope-limited token in place. */
+  const reauth = url.searchParams.get("reauth") === "1" || url.searchParams.get("reauth") === "true";
 
   // Temporary debug: do NOT print secrets; only whether they are set.
   const env = getGa4OauthEnvStatus();
-  console.log("[GA4 OAuth] env", env, "redirectTo", redirectTo);
+  console.log("[Google OAuth] start", { env, redirectTo, reauth, requestedScopes: [...GOOGLE_OAUTH_SCOPES] });
   if (!env.hasClientId || !env.hasClientSecret) {
     return NextResponse.json(
       {
@@ -25,8 +27,7 @@ export async function GET(request: NextRequest) {
   }
 
   const state = crypto.randomUUID();
-  // Encode redirect target into state payload (simple + sufficient for now)
-  const statePayload = JSON.stringify({ state, redirectTo });
+  const statePayload = JSON.stringify({ state, redirectTo, reauth });
   const stateB64 = Buffer.from(statePayload, "utf8").toString("base64url");
 
   const redirectUri = new URL("/api/ga4/oauth/callback", request.url).toString();
@@ -39,6 +40,9 @@ export async function GET(request: NextRequest) {
   }
   const res = NextResponse.redirect(authUrl);
   res.cookies.set(GA4_COOKIE_NAMES.state, stateB64, ga4CookieOptions(60 * 10));
+  if (reauth) {
+    res.cookies.set(GA4_COOKIE_NAMES.refresh, "", { ...ga4CookieOptions(0), maxAge: 0 });
+  }
   return res;
 }
 

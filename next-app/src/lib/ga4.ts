@@ -6,6 +6,12 @@ const GA_OAUTH_STATE_COOKIE = "crawlit_ga4_oauth_state";
 export type Ga4Property = { propertyId: string; displayName: string };
 export const GA4_COOKIE_NAMES = { refresh: GA_REFRESH_COOKIE, state: GA_OAUTH_STATE_COOKIE } as const;
 
+/** Single OAuth client for GA4 + Search Console (same refresh token must cover both). */
+export const GOOGLE_OAUTH_SCOPES = [
+  "https://www.googleapis.com/auth/analytics.readonly",
+  "https://www.googleapis.com/auth/webmasters.readonly",
+] as const;
+
 export function ga4CookieOptions(maxAgeSeconds: number) {
   return {
     httpOnly: true,
@@ -43,9 +49,12 @@ export function buildGa4OauthUrl(redirectUri: string, state: string): string {
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: "code",
-    scope: "https://www.googleapis.com/auth/analytics.readonly",
+    scope: [...GOOGLE_OAUTH_SCOPES].join(" "),
+    /** Required for refresh_token */
     access_type: "offline",
+    /** Force consent screen so new scopes apply and refresh_token can be re-issued */
     prompt: "consent",
+    /** Incremental authorization: keep previously granted scopes when adding new ones */
     include_granted_scopes: "true",
     state,
   });
@@ -59,7 +68,14 @@ export function getGa4OauthEnvStatus(): { hasClientId: boolean; hasClientSecret:
   };
 }
 
-export async function exchangeCodeForTokens(code: string, redirectUri: string): Promise<{ accessToken: string; refreshToken?: string }> {
+export type GoogleTokenExchangeResult = {
+  accessToken: string;
+  refreshToken?: string;
+  /** Space-separated scopes granted for this access token (when Google returns it). */
+  scope?: string;
+};
+
+export async function exchangeCodeForTokens(code: string, redirectUri: string): Promise<GoogleTokenExchangeResult> {
   const clientId = getEnv("GOOGLE_OAUTH_CLIENT_ID");
   const clientSecret = getEnv("GOOGLE_OAUTH_CLIENT_SECRET");
   const res = await fetch("https://oauth2.googleapis.com/token", {
@@ -73,11 +89,17 @@ export async function exchangeCodeForTokens(code: string, redirectUri: string): 
       grant_type: "authorization_code",
     }),
   });
-  const json = (await res.json()) as { access_token?: string; refresh_token?: string; error?: string; error_description?: string };
+  const json = (await res.json()) as {
+    access_token?: string;
+    refresh_token?: string;
+    scope?: string;
+    error?: string;
+    error_description?: string;
+  };
   if (!res.ok || !json.access_token) {
     throw new Error(json.error_description || json.error || "Failed to exchange OAuth code");
   }
-  return { accessToken: json.access_token, refreshToken: json.refresh_token };
+  return { accessToken: json.access_token, refreshToken: json.refresh_token, scope: json.scope };
 }
 
 export async function getAccessTokenFromRefreshToken(refreshToken: string): Promise<string> {

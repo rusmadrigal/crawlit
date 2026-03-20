@@ -28,21 +28,36 @@ export async function GET(request: NextRequest) {
   }
 
   let redirectTo = "/";
+  let reauth = false;
   try {
-    const decoded = JSON.parse(Buffer.from(state, "base64url").toString("utf8")) as { redirectTo?: string };
+    const decoded = JSON.parse(Buffer.from(state, "base64url").toString("utf8")) as { redirectTo?: string; reauth?: boolean };
     if (decoded.redirectTo) redirectTo = decoded.redirectTo;
+    reauth = Boolean(decoded.reauth);
   } catch {
     // ignore
   }
 
   const redirectUri = new URL("/api/ga4/oauth/callback", request.url).toString();
   const tokens = await exchangeCodeForTokens(code, redirectUri);
+
+  const granted = tokens.scope?.split(/\s+/).filter(Boolean) ?? [];
+  console.log("[Google OAuth] callback", {
+    reauth,
+    grantedScopes: granted.length ? granted : "(not returned by token endpoint)",
+    hasRefreshToken: Boolean(tokens.refreshToken),
+  });
+
   const res = NextResponse.redirect(new URL(redirectTo, request.url));
-  // clear state cookie
   res.cookies.set(GA4_COOKIE_NAMES.state, "", { ...ga4CookieOptions(0), maxAge: 0 });
-  // set refresh token cookie (only present on first consent)
+
   if (tokens.refreshToken) {
     res.cookies.set(GA4_COOKIE_NAMES.refresh, tokens.refreshToken, ga4CookieOptions(60 * 60 * 24 * 365));
+  } else if (reauth) {
+    // Re-auth flow cleared the old cookie at start; do not leave a stale token if Google omitted refresh_token.
+    res.cookies.set(GA4_COOKIE_NAMES.refresh, "", { ...ga4CookieOptions(0), maxAge: 0 });
+    console.warn(
+      "[Google OAuth] No refresh_token after reauth — user may need to revoke app access at https://myaccount.google.com/permissions and connect again."
+    );
   }
   return res;
 }

@@ -22,6 +22,10 @@ export type Project = {
   ga4PropertyId?: string;
   /** Optional GA4 property display name. */
   ga4PropertyName?: string;
+  /** Search Console property URL (e.g. https://www.example.com/ or sc-domain:example.com). */
+  gscSiteUrl?: string;
+  /** Optional label for the selected GSC property. */
+  gscSiteLabel?: string;
   /** Notes on the Performance chart by date. */
   performanceNotes?: PerformanceNote[];
   createdAt: string;
