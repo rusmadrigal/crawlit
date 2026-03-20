@@ -368,6 +368,135 @@ export async function fetchSearchIntent(
   return map;
 }
 
+/** Google Ads monthly search volume (+ CPC) per keyword; `searchVolume` null when Ads returns no figure. */
+export type KeywordVolumeMetrics = {
+  searchVolume: number | null;
+  cpc: number | null;
+};
+
+/**
+ * Batch monthly search volume and CPC from Google Ads (DataForSEO Keywords Data API).
+ * Up to 1000 keywords per request; map keys are lowercase (API normalizes keywords).
+ */
+export async function fetchKeywordSearchVolumes(
+  keywords: string[],
+  locationCode: number = 2840,
+  languageCode: string = "en"
+): Promise<Map<string, KeywordVolumeMetrics>> {
+  const apiKey = process.env.DATAFORSEO_API_KEY?.trim();
+  if (!apiKey) throw new Error("DATAFORSEO_API_KEY is not set.");
+  const list = [...new Set(keywords.map((k) => k.trim()).filter((k) => k.length > 0))].slice(0, 1000);
+  if (list.length === 0) return new Map();
+
+  const url = `${API_BASE}/v3/keywords_data/google_ads/search_volume/live`;
+  const body = JSON.stringify([{ keywords: list, location_code: locationCode, language_code: languageCode }]);
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body,
+  });
+
+  const json = (await res.json()) as {
+    status_code?: number;
+    status_message?: string;
+    tasks?: Array<{
+      status_code?: number;
+      status_message?: string;
+      result?: Array<{
+        keyword?: string;
+        search_volume?: number | null;
+        cpc?: number | null;
+      }>;
+    }>;
+  };
+
+  if (json.status_code !== 20000) {
+    throw new Error(json.status_message ?? `DataForSEO search volume error ${json.status_code ?? "unknown"}`);
+  }
+  const task = json.tasks?.[0];
+  if (!task || task.status_code !== 20000) {
+    throw new Error(
+      (task as { status_message?: string }).status_message ?? `Search volume task error ${task?.status_code ?? "unknown"}`
+    );
+  }
+
+  const map = new Map<string, KeywordVolumeMetrics>();
+  for (const row of task.result ?? []) {
+    const kw = typeof row.keyword === "string" ? row.keyword.trim().toLowerCase() : "";
+    if (!kw) continue;
+    const sv = row.search_volume;
+    const searchVolume = typeof sv === "number" ? sv : null;
+    const cpc = typeof row.cpc === "number" ? row.cpc : null;
+    map.set(kw, { searchVolume, cpc });
+  }
+  return map;
+}
+
+/**
+ * Keyword difficulty (0–100, Labs) for up to 1000 keywords in one request.
+ * Map keys are lowercase (API normalizes keywords).
+ */
+export async function fetchKeywordDifficulties(
+  keywords: string[],
+  locationCode: number = 2840,
+  languageCode: string = "en"
+): Promise<Map<string, number>> {
+  const apiKey = process.env.DATAFORSEO_API_KEY?.trim();
+  if (!apiKey) throw new Error("DATAFORSEO_API_KEY is not set.");
+  const list = [...new Set(keywords.map((k) => k.trim()).filter((k) => k.length > 0))].slice(0, 1000);
+  if (list.length === 0) return new Map();
+
+  const url = `${API_BASE}/v3/dataforseo_labs/google/bulk_keyword_difficulty/live`;
+  const body = JSON.stringify([{ keywords: list, location_code: locationCode, language_code: languageCode }]);
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body,
+  });
+
+  const json = (await res.json()) as {
+    status_code?: number;
+    status_message?: string;
+    tasks?: Array<{
+      status_code?: number;
+      status_message?: string;
+      result?: Array<{
+        items?: Array<{
+          keyword?: string;
+          keyword_difficulty?: number;
+        }>;
+      }>;
+    }>;
+  };
+
+  if (json.status_code !== 20000) {
+    throw new Error(json.status_message ?? `DataForSEO keyword difficulty error ${json.status_code ?? "unknown"}`);
+  }
+  const task = json.tasks?.[0];
+  if (!task || task.status_code !== 20000) {
+    throw new Error(
+      (task as { status_message?: string }).status_message ?? `Keyword difficulty task error ${task?.status_code ?? "unknown"}`
+    );
+  }
+
+  const map = new Map<string, number>();
+  const items = task.result?.[0]?.items ?? [];
+  for (const item of items) {
+    const kw = typeof item.keyword === "string" ? item.keyword.trim().toLowerCase() : "";
+    const kd = item.keyword_difficulty;
+    if (kw && typeof kd === "number") map.set(kw, kd);
+  }
+  return map;
+}
+
 // --- Historical Rank Overview (visibility / estimated traffic) ---
 
 export type HistoricalRankOverviewResult = {

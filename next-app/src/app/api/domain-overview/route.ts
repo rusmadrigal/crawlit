@@ -1,10 +1,22 @@
 import { NextRequest } from "next/server";
-import { isDataforseoConfigured, fetchKeywordsForSite, fetchHistoricalRankOverview, fetchRankedKeywords, fetchSearchIntent } from "@/lib/dataforseo";
+import {
+  isDataforseoConfigured,
+  fetchKeywordDifficulties,
+  fetchKeywordSearchVolumes,
+  fetchKeywordsForSite,
+  fetchHistoricalRankOverview,
+  fetchRankedKeywords,
+  fetchSearchIntent,
+} from "@/lib/dataforseo";
 import { getOverviewCached, setOverviewCached, invalidateOverviewCache } from "@/lib/overview-cache";
 import { DEFAULT_LOCATION_CODE } from "@/lib/locations";
 import { fetchGa4OrganicSessionsDaily, fetchGa4OrganicSessionsMonthly, getAccessTokenFromRefreshToken, getGa4RefreshToken } from "@/lib/ga4";
 import {
   countDistinctQueriesLastNDays,
+  fetchGscBestPagePerQueryInRange,
+  fetchGscTopQueriesPositionHistories,
+  fetchTopQueriesFromGsc,
+  gscDateRangeLastNDays,
   mergeGscPagesIntoHistory,
   mergeGscQueriesIntoHistory,
 } from "@/lib/gsc";
@@ -22,7 +34,18 @@ export type DomainOverviewApiResponse = {
   /** Distinct ranking keywords (DataForSEO) or distinct search queries last 28 days (GSC when site linked). */
   keywordCount?: number;
   totalSearchVolume?: number;
-  topKeywords?: { keyword: string; searchVolume: number; cpc?: number | null; position?: number | null; url?: string | null; keywordDifficulty?: number | null; intent?: string | null }[];
+  topKeywords?: {
+    keyword: string;
+    searchVolume: number;
+    position?: number | null;
+    url?: string | null;
+    keywordDifficulty?: number | null;
+    intent?: string | null;
+    /** Daily average position (GSC), oldest→newest; same window as top queries (e.g. 28d). */
+    positionHistory?: number[];
+  }[];
+  /** True when rows are ordered from GSC (last 28d, by clicks); volume from DataForSEO Google Ads; intent/KD from DataForSEO. */
+  topKeywordsFromGsc?: boolean;
   cached?: boolean;
   error?: string;
 };
@@ -89,6 +112,81 @@ export async function GET(request: NextRequest) {
         siteUrl: gscSiteUrl,
         days: 28,
       });
+
+      try {
+        const { startDate, endDate } = gscDateRangeLastNDays(28);
+        const raw = await fetchTopQueriesFromGsc({
+          accessToken,
+          siteUrl: gscSiteUrl,
+          startDate,
+          endDate,
+          rowLimit: 25,
+        });
+        const top = raw.slice(0, 20);
+        if (top.length === 0) {
+          payload.topKeywords = [];
+          payload.topKeywordsFromGsc = true;
+        } else {
+          const queries = top.map((r) => r.query);
+          const intentQueries = queries.filter((q) => q.trim().length >= 3);
+
+          const [volSettled, intentSettled, pagesSettled, kdSettled] = await Promise.allSettled([
+            fetchKeywordSearchVolumes(queries, locationCode, "en"),
+            fetchSearchIntent(intentQueries, "en"),
+            fetchGscBestPagePerQueryInRange({
+              accessToken,
+              siteUrl: gscSiteUrl,
+              startDate,
+              endDate,
+              queries,
+            }),
+            fetchKeywordDifficulties(queries, locationCode, "en"),
+          ]);
+          const volumeByKeyword =
+            volSettled.status === "fulfilled"
+              ? volSettled.value
+              : new Map<string, { searchVolume: number | null; cpc: number | null }>();
+          const intentByKeyword = intentSettled.status === "fulfilled" ? intentSettled.value : {};
+          const pageByQuery =
+            pagesSettled.status === "fulfilled" ? pagesSettled.value : new Map<string, string>();
+          const kdByKeyword = kdSettled.status === "fulfilled" ? kdSettled.value : new Map<string, number>();
+
+          let positionHistories = new Map<string, number[]>();
+          try {
+            positionHistories = await fetchGscTopQueriesPositionHistories({
+              accessToken,
+              siteUrl: gscSiteUrl,
+              startDate,
+              endDate,
+              queries,
+              concurrency: 4,
+            });
+          } catch {
+            // Per-query handler already fills empty series; keep map empty on total failure
+          }
+
+          payload.topKeywords = top.map((r) => {
+            const key = r.query.trim().toLowerCase();
+            const vol = volumeByKeyword.get(key);
+            const searchVolume =
+              vol?.searchVolume != null ? vol.searchVolume : r.impressions;
+            const landing = pageByQuery.get(key) ?? null;
+            const positionHistory = positionHistories.get(key) ?? [];
+            return {
+              keyword: r.query,
+              searchVolume,
+              position: Math.round(r.position * 10) / 10,
+              url: landing,
+              keywordDifficulty: kdByKeyword.get(key) ?? null,
+              intent: (intentByKeyword[r.query] ?? intentByKeyword[r.query.toLowerCase()] ?? null) as string | null,
+              positionHistory,
+            };
+          });
+          payload.topKeywordsFromGsc = true;
+        }
+      } catch {
+        // Keep DataForSEO-backed topKeywords already on the payload
+      }
       return undefined;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Search Console request failed";
@@ -133,7 +231,7 @@ export async function GET(request: NextRequest) {
       rankedRows = (cachedMonthly.topKeywords ?? []).map((k) => ({
         keyword: k.keyword,
         searchVolume: k.searchVolume,
-        cpc: k.cpc ?? null,
+        cpc: null as number | null,
         position: k.position ?? null,
         url: k.url ?? null,
         keywordDifficulty: k.keywordDifficulty ?? null,
@@ -149,7 +247,30 @@ export async function GET(request: NextRequest) {
           history: [] as { date: string; organicPages: number; organicTraffic: number; organicKeywords?: number }[],
           historyError: err instanceof Error ? err.message : "Failed to load historical data",
         })),
-        fetchRankedKeywords(domain, locationCode).catch(() => [] as { keyword: string; searchVolume: number; cpc: number | null; position: number | null; url: string | null; keywordDifficulty: number | null; intent: string | null }[]),
+        gscSiteUrl
+          ? Promise.resolve(
+              [] as {
+                keyword: string;
+                searchVolume: number;
+                cpc: number | null;
+                position: number | null;
+                url: string | null;
+                keywordDifficulty: number | null;
+                intent: string | null;
+              }[]
+            )
+          : fetchRankedKeywords(domain, locationCode).catch(
+              () =>
+                [] as {
+                  keyword: string;
+                  searchVolume: number;
+                  cpc: number | null;
+                  position: number | null;
+                  url: string | null;
+                  keywordDifficulty: number | null;
+                  intent: string | null;
+                }[]
+            ),
       ]);
       keywordsResult = kwResult;
       visibilityResult = visResult;
@@ -170,19 +291,27 @@ export async function GET(request: NextRequest) {
           }
         }
       }
-      topKeywords =
-        rankedRows.length > 0
+      topKeywords = gscSiteUrl
+        ? (keywordsResult.topKeywords ?? []).map((k) => ({
+            keyword: k.keyword,
+            searchVolume: k.searchVolume,
+            position: null as number | null,
+            url: null as string | null,
+            keywordDifficulty: null as number | null,
+            intent: null as string | null,
+          }))
+        : rankedRows.length > 0
           ? rankedRows.map((r) => ({
               keyword: r.keyword,
               searchVolume: r.searchVolume,
-              cpc: r.cpc,
               position: r.position,
               url: r.url,
               keywordDifficulty: r.keywordDifficulty ?? null,
               intent: (r.intent?.trim() || intentByKeyword[r.keyword] || intentByKeyword[r.keyword.toLowerCase()] || null) as string | null,
             }))
           : (keywordsResult.topKeywords ?? []).map((k) => ({
-              ...k,
+              keyword: k.keyword,
+              searchVolume: k.searchVolume,
               position: null as number | null,
               url: null as string | null,
               keywordDifficulty: null as number | null,

@@ -30,6 +30,10 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
+import { DayPicker, type DateRange } from "react-day-picker";
+import { enUS } from "date-fns/locale";
+import { format, subDays, subMonths } from "date-fns";
+import "react-day-picker/style.css";
 import { useProjects } from "@/components/providers/projects-provider";
 import { DEFAULT_LOCATION_CODE } from "@/lib/locations";
 import { cn } from "@/lib/utils";
@@ -47,13 +51,16 @@ function RankingHistorySparkline({
 }) {
   const isEmpty = points.length < 2;
   const content = isEmpty ? (
-    <span className="inline-flex h-6 w-12 cursor-pointer items-center justify-center rounded bg-[var(--muted-bg)] transition-opacity hover:opacity-80" title="View history">
+    <span
+      className="inline-flex h-6 w-12 cursor-pointer items-center justify-center rounded bg-[var(--muted-bg)] transition-opacity hover:opacity-80"
+      title="View position history (Search Console)"
+    >
       <svg width={32} height={16} className="opacity-50" aria-hidden>
         <line x1={2} y1={8} x2={30} y2={8} stroke="currentColor" strokeWidth={1} />
       </svg>
     </span>
   ) : (
-    <span className="inline-flex cursor-pointer items-center justify-center" title="View history">
+    <span className="inline-flex cursor-pointer items-center justify-center" title="View position history (12–24 months)">
       <svg width={32} height={14} className="text-[var(--primary)]" aria-hidden>
         <path
           d={(() => {
@@ -81,83 +88,412 @@ function RankingHistorySparkline({
       type="button"
       onClick={() => onOpenHistory(keyword)}
       className="rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
-      aria-label={`View ranking history for ${keyword}`}
+      aria-label={`View position history for ${keyword}`}
     >
       {content}
     </button>
   );
 }
 
-/** Modal: Ranking history for a keyword */
-function RankingHistoryModal({
+type GscKeywordHistoryPoint = { date: string; position: number };
+
+function localYesterday(): Date {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  d.setHours(12, 0, 0, 0);
+  return d;
+}
+
+type HistoryRangePreset = "12" | "24" | "custom";
+
+/** Modal: position history from GSC (presets, custom calendar range) or short fallback from overview. */
+function KeywordPositionHistoryModal({
   keyword,
   open,
   onClose,
-  historyPoints,
+  gscSiteUrl,
+  shortPositionHistory,
 }: {
   keyword: string;
   open: boolean;
   onClose: () => void;
-  historyPoints?: number[];
+  gscSiteUrl: string | null;
+  shortPositionHistory?: number[];
 }) {
+  const [rangePreset, setRangePreset] = useState<HistoryRangePreset>("12");
+  const [calendarRange, setCalendarRange] = useState<DateRange | undefined>(undefined);
+  const [customApplied, setCustomApplied] = useState<{ from: Date; to: Date } | null>(null);
+  const [showCustomCalendar, setShowCustomCalendar] = useState(false);
+  const [points, setPoints] = useState<GscKeywordHistoryPoint[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [retentionNote, setRetentionNote] = useState<string | null>(null);
+  const [rangeLabel, setRangeLabel] = useState<string | null>(null);
+
+  const yMax = localYesterday();
+
+  const handlePreset12 = () => {
+    setRangePreset("12");
+    setCustomApplied(null);
+    setShowCustomCalendar(false);
+  };
+  const handlePreset24 = () => {
+    setRangePreset("24");
+    setCustomApplied(null);
+    setShowCustomCalendar(false);
+  };
+  const handlePresetCustom = () => {
+    setRangePreset("custom");
+    setCustomApplied(null);
+    setShowCustomCalendar(true);
+    setPoints([]);
+    setRangeLabel(null);
+    setRetentionNote(null);
+    setError(null);
+    const y = localYesterday();
+    setCalendarRange({ from: subDays(y, 27), to: y });
+  };
+  const applyCustomRange = () => {
+    if (!calendarRange?.from || !calendarRange?.to) return;
+    setPoints([]);
+    setError(null);
+    setRetentionNote(null);
+    setRangeLabel(null);
+    setCustomApplied({ from: calendarRange.from, to: calendarRange.to });
+    setShowCustomCalendar(false);
+  };
+
+  useEffect(() => {
+    if (open) {
+      setRangePreset("12");
+      setCustomApplied(null);
+      setShowCustomCalendar(false);
+      const y = localYesterday();
+      setCalendarRange({ from: subDays(y, 27), to: y });
+    }
+  }, [open, keyword]);
+
+  useEffect(() => {
+    if (!open || !gscSiteUrl || !keyword.trim()) {
+      if (!open) {
+        setPoints([]);
+        setError(null);
+        setRetentionNote(null);
+        setRangeLabel(null);
+      }
+      return;
+    }
+
+    if (rangePreset === "custom") {
+      if (!customApplied?.from || !customApplied?.to) {
+        setLoading(false);
+        return;
+      }
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    const base = `/api/gsc/keyword-position-history?keyword=${encodeURIComponent(keyword)}&gsc_site_url=${encodeURIComponent(gscSiteUrl)}`;
+    const url =
+      rangePreset === "custom" && customApplied?.from && customApplied?.to
+        ? `${base}&start_date=${format(customApplied.from, "yyyy-MM-dd")}&end_date=${format(customApplied.to, "yyyy-MM-dd")}`
+        : `${base}&months=${rangePreset === "24" ? 24 : 12}`;
+
+    fetch(url)
+      .then(async (res) => {
+        const data = (await res.json()) as {
+          ok?: boolean;
+          error?: string;
+          points?: GscKeywordHistoryPoint[];
+          range?: { startDate: string; endDate: string; monthsRequested?: number; custom?: boolean };
+          note?: string;
+        };
+        if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load position history");
+        return data;
+      })
+      .then((data) => {
+        if (cancelled) return;
+        setPoints(data.points ?? []);
+        setRetentionNote(data.note ?? null);
+        const r = data.range;
+        setRangeLabel(r ? `${r.startDate} → ${r.endDate}` : null);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Something went wrong");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, keyword, gscSiteUrl, rangePreset, customApplied]);
+
   if (!open) return null;
+
+  const showLong = Boolean(gscSiteUrl);
+  const shortChartData =
+    shortPositionHistory && shortPositionHistory.length >= 2
+      ? shortPositionHistory.map((position, i) => ({ day: i + 1, position }))
+      : [];
+
+  const formatDateTick = (dateStr: string) => {
+    const [y, m] = dateStr.split("-");
+    if (!y || !m) return dateStr;
+    const mo = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    return `${mo[Number(m) - 1] ?? m} ${y}`;
+  };
+
+  const chartMargin = { top: 12, right: 16, left: 4, bottom: 8 };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
-      aria-labelledby="ranking-history-title"
+      aria-labelledby="keyword-position-history-title"
     >
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} aria-hidden />
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px]" onClick={onClose} aria-hidden />
       <div
-        className="relative max-h-[85vh] w-full max-w-md overflow-hidden rounded-xl border shadow-lg"
+        className="relative max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-2xl border shadow-2xl"
         style={{ backgroundColor: "var(--card)", borderColor: "var(--card-border)" }}
       >
-        <div className="flex items-center justify-between border-b p-4" style={{ borderColor: "var(--border)" }}>
-          <h3 id="ranking-history-title" className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
-            Ranking history
-          </h3>
+        <div
+          className="flex items-start justify-between gap-4 border-b px-6 py-4"
+          style={{ borderColor: "var(--border)" }}
+        >
+          <div>
+            <h3 id="keyword-position-history-title" className="text-lg font-semibold tracking-tight" style={{ color: "var(--foreground)" }}>
+              Position history
+            </h3>
+            <p className="mt-1 text-sm font-medium leading-snug" style={{ color: "var(--foreground)" }}>
+              {keyword}
+            </p>
+            {rangeLabel && (
+              <p className="mt-1 font-mono text-xs tabular-nums" style={{ color: "var(--muted)" }}>
+                {rangeLabel}
+              </p>
+            )}
+          </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded p-1 transition-colors hover:bg-[var(--muted-bg)]"
+            className="shrink-0 rounded-lg p-2 transition-colors hover:bg-[var(--muted-bg)]"
             aria-label="Close"
           >
-            <span className="text-xl leading-none" style={{ color: "var(--muted)" }}>×</span>
+            <span className="text-xl leading-none" style={{ color: "var(--muted)" }}>
+              ×
+            </span>
           </button>
         </div>
-        <div className="p-4">
-          <p className="mb-3 text-sm font-medium" style={{ color: "var(--foreground)" }}>
-            {keyword}
-          </p>
-          {historyPoints && historyPoints.length >= 2 ? (
-            <div className="h-40 w-full">
-              <svg viewBox={`0 0 300 120`} className="h-full w-full" preserveAspectRatio="none">
-                <polyline
-                  fill="none"
-                  stroke="var(--primary)"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  points={historyPoints
-                    .map((p, i) => {
-                      const x = (i / (historyPoints.length - 1)) * 280 + 10;
-                      const max = Math.max(...historyPoints);
-                      const min = Math.min(...historyPoints);
-                      const range = max - min || 1;
-                      const y = 110 - ((p - min) / range) * 100;
-                      return `${x},${y}`;
-                    })
-                    .join(" ")}
-                />
-              </svg>
-              <p className="mt-2 text-xs" style={{ color: "var(--muted)" }}>
-                Position over time (lower is better)
+
+        <div className="space-y-4 px-6 py-5">
+          {showLong ? (
+            <>
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-medium uppercase tracking-wide" style={{ color: "var(--muted)" }}>
+                    Range
+                  </span>
+                  <div className="inline-flex flex-wrap rounded-lg border p-0.5" style={{ borderColor: "var(--border)" }}>
+                    <button
+                      type="button"
+                      onClick={handlePreset12}
+                      className="rounded-md px-3 py-1.5 text-sm font-medium transition-colors"
+                      style={{
+                        backgroundColor: rangePreset === "12" ? "var(--muted-bg)" : "transparent",
+                        color: "var(--foreground)",
+                      }}
+                    >
+                      Last 12 months
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handlePreset24}
+                      className="rounded-md px-3 py-1.5 text-sm font-medium transition-colors"
+                      style={{
+                        backgroundColor: rangePreset === "24" ? "var(--muted-bg)" : "transparent",
+                        color: "var(--foreground)",
+                      }}
+                    >
+                      Last 24 months
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handlePresetCustom}
+                      className="rounded-md px-3 py-1.5 text-sm font-medium transition-colors"
+                      style={{
+                        backgroundColor: rangePreset === "custom" ? "var(--muted-bg)" : "transparent",
+                        color: "var(--foreground)",
+                      }}
+                    >
+                      Custom range
+                    </button>
+                  </div>
+                </div>
+
+                {rangePreset === "custom" && showCustomCalendar && (
+                  <div
+                    className="flex flex-col gap-3 rounded-xl border p-4 sm:flex-row sm:items-start sm:justify-between"
+                    style={{ borderColor: "var(--border)", background: "var(--muted-bg)" }}
+                  >
+                    <DayPicker
+                      mode="range"
+                      selected={calendarRange}
+                      onSelect={(range) => {
+                        setCalendarRange(range);
+                      }}
+                      numberOfMonths={2}
+                      locale={enUS}
+                      defaultMonth={subMonths(yMax, 1)}
+                      disabled={{ after: yMax }}
+                      className="mx-auto sm:mx-0"
+                      style={{
+                        color: "var(--foreground)",
+                        // Make the calendar visually consistent with the app theme.
+                        ["--rdp-accent-color" as any]: "var(--primary)",
+                        ["--rdp-accent-background-color" as any]: "color-mix(in srgb, var(--primary) 18%, transparent)",
+                        ["--rdp-day_button-border" as any]: "1px solid var(--border)",
+                        ["--rdp-weekday-text-transform" as any]: "none",
+                      }}
+                    />
+                    <div className="flex flex-col gap-2 sm:min-w-[140px]">
+                      <p className="text-xs leading-relaxed" style={{ color: "var(--muted)" }}>
+                        {calendarRange?.from && calendarRange?.to
+                          ? `${format(calendarRange.from, "MMM d, yyyy")} – ${format(calendarRange.to, "MMM d, yyyy")}`
+                          : "Select a start and end date."}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={applyCustomRange}
+                        disabled={!calendarRange?.from || !calendarRange?.to || loading}
+                        className="rounded-lg px-4 py-2 text-sm font-medium transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
+                        style={{ backgroundColor: "var(--primary)", color: "var(--primary-foreground)" }}
+                      >
+                        Apply range
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {loading && (
+                <div className="flex h-72 items-center justify-center rounded-xl border" style={{ borderColor: "var(--border)", background: "var(--muted-bg)" }}>
+                  <Loader2 className="size-8 animate-spin" style={{ color: "var(--muted)" }} aria-hidden />
+                </div>
+              )}
+
+              {!loading && error && (
+                <p className="rounded-lg border px-4 py-3 text-sm" style={{ borderColor: "var(--border)", color: "#dc2626" }}>
+                  {error}
+                </p>
+              )}
+
+              {!loading && !error && points.length >= 2 && (
+                <div className="h-80 w-full rounded-xl border pt-2" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={points} margin={chartMargin}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                      <XAxis
+                        dataKey="date"
+                        tick={{ fontSize: 10, fill: "var(--muted)" }}
+                        tickFormatter={formatDateTick}
+                        minTickGap={28}
+                        stroke="var(--border)"
+                      />
+                      <YAxis
+                        reversed
+                        domain={["auto", "auto"]}
+                        width={44}
+                        tick={{ fontSize: 11, fill: "var(--muted)" }}
+                        stroke="var(--border)"
+                        label={{
+                          value: "Avg. position",
+                          angle: -90,
+                          position: "insideLeft",
+                          style: { fill: "var(--muted)", fontSize: 11 },
+                        }}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: "var(--card)",
+                          border: "1px solid var(--border)",
+                          borderRadius: "8px",
+                          boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+                        }}
+                        labelFormatter={(label) => label}
+                        formatter={(value) => [`${Number(value).toFixed(1)}`, "Avg. position"]}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="position"
+                        stroke="var(--primary)"
+                        strokeWidth={2}
+                        dot={points.length <= 45}
+                        activeDot={{ r: 4 }}
+                        name="position"
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+
+              {!loading && !error && points.length < 2 && (
+                <p className="text-sm" style={{ color: "var(--muted)" }}>
+                  {rangePreset === "custom" && !customApplied
+                    ? "Select start and end dates, then click Apply range to load the chart."
+                    : "No daily position data in Search Console for this query in the selected range."}
+                </p>
+              )}
+
+              {retentionNote && (
+                <p className="text-xs leading-relaxed" style={{ color: "var(--muted)" }}>
+                  {retentionNote}
+                </p>
+              )}
+              <p className="text-xs" style={{ color: "var(--muted)" }}>
+                Lower values mean a better average position. Source: Google Search Console (Search Analytics).
               </p>
-            </div>
+            </>
+          ) : shortChartData.length >= 2 ? (
+            <>
+              <p className="text-xs" style={{ color: "var(--muted)" }}>
+                Quick view: last 28 days (same window as the table). Link Search Console to load 12 / 24 months or a custom range.
+              </p>
+              <div className="h-64 w-full rounded-xl border pt-2" style={{ borderColor: "var(--border)" }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={shortChartData} margin={chartMargin}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                    <XAxis dataKey="day" tick={{ fontSize: 10, fill: "var(--muted)" }} stroke="var(--border)" />
+                    <YAxis
+                      reversed
+                      domain={["auto", "auto"]}
+                      width={44}
+                      tick={{ fontSize: 11, fill: "var(--muted)" }}
+                      stroke="var(--border)"
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "var(--card)",
+                        border: "1px solid var(--border)",
+                        borderRadius: "8px",
+                      }}
+                      formatter={(value) => [`${Number(value).toFixed(1)}`, "Avg. position"]}
+                    />
+                    <Line type="monotone" dataKey="position" stroke="var(--primary)" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </>
+          ) : !gscSiteUrl ? (
+            <p className="text-sm" style={{ color: "var(--muted)" }}>
+              Link a Search Console property to this project to load position history (presets or custom dates).
+            </p>
           ) : (
             <p className="text-sm" style={{ color: "var(--muted)" }}>
-              No ranking history data yet. History will appear when position tracking data is available.
+              No position history is available for this keyword.
             </p>
           )}
         </div>
@@ -379,12 +715,60 @@ function PerformanceNotesModal({
 type TopKeywordRow = {
   keyword: string;
   searchVolume: number;
-  cpc?: number | null;
   position?: number | null;
   url?: string | null;
   keywordDifficulty?: number | null;
   intent?: string | null;
+  /** Daily average position from GSC (oldest → newest), when top keywords are GSC-backed. */
+  positionHistory?: number[];
 };
+
+/**
+ * WoW-style change: avg position last 7 days vs prior 7 days (same window as GSC `positionHistory`).
+ * @returns positive = better (average position number went down), null if not enough days.
+ */
+function computeAvgPositionWowChange(positionHistory: number[] | undefined): number | null {
+  if (!positionHistory || positionHistory.length < 14) return null;
+  const last7 = positionHistory.slice(-7);
+  const prev7 = positionHistory.slice(-14, -7);
+  const avg = (arr: number[]) => arr.reduce((s, v) => s + v, 0) / arr.length;
+  return avg(prev7) - avg(last7);
+}
+
+function PositionWowChangeCell({ positionHistory }: { positionHistory: number[] | undefined }) {
+  const ch = computeAvgPositionWowChange(positionHistory);
+  if (ch === null) {
+    return <span style={{ color: "var(--muted)" }}>—</span>;
+  }
+  if (Math.abs(ch) < 0.05) {
+    return (
+      <span className="tabular-nums" style={{ color: "var(--muted)" }} title="Avg position stable vs prior 7 days">
+        ≈0
+      </span>
+    );
+  }
+  const t = ch.toFixed(1);
+  if (ch > 0) {
+    return (
+      <span
+        className="tabular-nums font-medium"
+        style={{ color: "#059669" }}
+        title="Better average position vs the 7 days before (lower is better)"
+      >
+        +{t}
+      </span>
+    );
+  }
+  return (
+    <span
+      className="tabular-nums font-medium"
+      style={{ color: "#dc2626" }}
+      title="Worse average position vs the 7 days before"
+    >
+      {t}
+    </span>
+  );
+}
 
 const INTENT_COLORS: Record<string, string> = {
   informational: "#2563eb",
@@ -538,6 +922,8 @@ type OverviewData = {
   keywordCount?: number;
   totalSearchVolume?: number;
   topKeywords?: TopKeywordRow[];
+  /** GSC order (28d); volume from DataForSEO Google Ads; KD/intent from DataForSEO. */
+  topKeywordsFromGsc?: boolean;
   cached?: boolean;
 } | null;
 
@@ -576,7 +962,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
   const [overviewError, setOverviewError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [historyModalKeyword, setHistoryModalKeyword] = useState<string | null>(null);
-  const [sortBy, setSortBy] = useState<"volume" | "cpc" | "position">("volume");
+  const [sortBy, setSortBy] = useState<"volume" | "position">("volume");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [showOrganicPages, setShowOrganicPages] = useState(true);
   const [showOrganicTraffic, setShowOrganicTraffic] = useState(true);
@@ -629,6 +1015,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
           keywordCount: data.keywordCount,
           totalSearchVolume: data.totalSearchVolume,
           topKeywords: data.topKeywords,
+          topKeywordsFromGsc: data.topKeywordsFromGsc === true,
           cached: data.cached,
         });
       } catch {
@@ -1353,9 +1740,11 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
         onSave={(notes) => project?.id && updateProject(project.id, { performanceNotes: notes })}
       />
 
-      {/* Top keywords table */}
-      {overviewData?.topKeywords && overviewData.topKeywords.length > 0 && (() => {
-        const topKeywords = overviewData.topKeywords;
+      {/* Top keywords table — GSC-backed list can be empty (no queries in 28d) */}
+      {overviewData &&
+        ((overviewData.topKeywords && overviewData.topKeywords.length > 0) || overviewData.topKeywordsFromGsc) &&
+        (() => {
+        const topKeywords = overviewData.topKeywords ?? [];
         const intentOptions = Array.from(
           new Map(
             topKeywords.map((kw) => {
@@ -1378,11 +1767,27 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
         }
         return (
         <div className="ml-2 mt-2 md:ml-4">
-          <h2 className="mb-4 text-lg font-semibold" style={{ color: "var(--foreground)" }}>
+          <h2
+            className={`text-lg font-semibold ${overviewData.topKeywordsFromGsc ? "mb-1" : "mb-4"}`}
+            style={{ color: "var(--foreground)" }}
+          >
             Top keywords
           </h2>
+          {overviewData.topKeywordsFromGsc ? (
+            <p className="mb-4 text-xs" style={{ color: "var(--muted)" }}>
+              Queries ordered by Search Console performance (last 28 days). Volume from DataForSEO (Google Ads search volume);
+              KD from DataForSEO Labs (bulk keyword difficulty); intent from DataForSEO. If Ads has no volume for a query,
+              GSC impressions are shown instead. Change compares average position in the last 7 days vs the previous 7 days
+              (+ = better ranking).
+            </p>
+          ) : null}
           <Card className="overflow-hidden border-[var(--card-border)] bg-[var(--card)]">
             <div className="overflow-x-auto px-4">
+              {topKeywords.length === 0 ? (
+                <p className="py-8 text-center text-sm" style={{ color: "var(--muted)" }}>
+                  No search queries with data in the last 28 days in Search Console.
+                </p>
+              ) : (
               <table className="w-full text-sm">
                 <thead>
                   <tr
@@ -1592,20 +1997,6 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                     <th className="py-3 pr-4 text-right">KD</th>
                     <th className="py-3 pr-4 text-right">
                       <SortableHeader
-                        label="CPC"
-                        active={sortBy === "cpc"}
-                        order={sortOrder}
-                        onClick={() => {
-                          if (sortBy === "cpc") setSortOrder((o) => (o === "desc" ? "asc" : "desc"));
-                          else {
-                            setSortBy("cpc");
-                            setSortOrder("desc");
-                          }
-                        }}
-                      />
-                    </th>
-                    <th className="py-3 pr-4 text-right">
-                      <SortableHeader
                         label="Position"
                         active={sortBy === "position"}
                         order={sortOrder}
@@ -1618,7 +2009,12 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                         }}
                       />
                     </th>
-                    <th className="py-3 pr-4">Change</th>
+                    <th
+                      className="py-3 pr-4"
+                      title="Average position: last 7 days vs the 7 days before. + = improved (lower avg position). Uses Search Console daily series when available."
+                    >
+                      Change
+                    </th>
                     <th className="py-3 pr-4 min-w-[180px]">URL</th>
                     <th className="py-3 pl-4 pr-4 w-20 text-center">History</th>
                   </tr>
@@ -1630,9 +2026,6 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                       if (sortBy === "volume") {
                         va = a.searchVolume;
                         vb = b.searchVolume;
-                      } else if (sortBy === "cpc") {
-                        va = a.cpc ?? 0;
-                        vb = b.cpc ?? 0;
                       } else {
                         va = a.position ?? 999;
                         vb = b.position ?? 999;
@@ -1659,13 +2052,10 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                           {kw.keywordDifficulty != null ? kw.keywordDifficulty : "—"}
                         </td>
                         <td className="py-2.5 pr-4 text-right tabular-nums" style={{ color: "var(--muted)" }}>
-                          {kw.cpc != null ? `$${kw.cpc.toFixed(2)}` : "—"}
-                        </td>
-                        <td className="py-2.5 pr-4 text-right tabular-nums" style={{ color: "var(--muted)" }}>
                           {kw.position != null ? kw.position : "—"}
                         </td>
-                        <td className="py-2.5 pr-4" style={{ color: "var(--muted)" }}>
-                          —
+                        <td className="py-2.5 pr-4">
+                          <PositionWowChangeCell positionHistory={kw.positionHistory} />
                         </td>
                         <td className="py-2.5 pr-4 font-mono text-xs" style={{ color: "var(--muted)" }}>
                           {kw.url ? (
@@ -1685,7 +2075,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                         <td className="py-2.5 pl-4 pr-4">
                           <RankingHistorySparkline
                             keyword={kw.keyword}
-                            points={[]}
+                            points={kw.positionHistory ?? []}
                             onOpenHistory={setHistoryModalKeyword}
                           />
                         </td>
@@ -1693,17 +2083,19 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                     ))}
                 </tbody>
               </table>
+              )}
             </div>
           </Card>
         </div>
         );
       })()}
 
-      <RankingHistoryModal
+      <KeywordPositionHistoryModal
         keyword={historyModalKeyword ?? ""}
         open={historyModalKeyword !== null}
         onClose={() => setHistoryModalKeyword(null)}
-        historyPoints={undefined}
+        gscSiteUrl={project?.gscSiteUrl ?? null}
+        shortPositionHistory={overviewData?.topKeywords?.find((k) => k.keyword === historyModalKeyword)?.positionHistory}
       />
 
       {/* Quick actions - main tools */}
