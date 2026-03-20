@@ -684,6 +684,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
   }, []);
 
   const pagesChartLabel = project?.gscSiteUrl ? "Page indexing (GSC)" : "Organic pages";
+  const keywordsChartLabel = project?.gscSiteUrl ? "Organic queries (GSC)" : "Organic keywords";
 
   useEffect(() => {
     if (project?.domain) fetchOverview();
@@ -915,7 +916,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm font-medium" style={{ color: "var(--muted)" }}>
               <BarChart3 className="size-4" aria-hidden />
-              Organic keywords
+              {project?.gscSiteUrl ? "Search queries" : "Organic keywords"}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -929,7 +930,8 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                   {overviewData.keywordCount.toLocaleString()}
                 </p>
                 <p className="text-xs" style={{ color: "var(--muted)" }}>
-                  {overviewData.cached ? "Cached · " : ""}From DataForSEO
+                  {overviewData.cached ? "Cached · " : ""}
+                  {project?.gscSiteUrl ? "Distinct queries (last 28 days)" : "From DataForSEO"}
                 </p>
               </>
             ) : (
@@ -1021,7 +1023,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                     className="h-4 w-4 rounded border-[var(--border)]"
                     style={{ accentColor: "#059669" }}
                   />
-                  <span className="text-sm font-medium" style={{ color: "#059669" }}>Organic keywords</span>
+                  <span className="text-sm font-medium" style={{ color: "#059669" }}>{keywordsChartLabel}</span>
                 </label>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -1240,7 +1242,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                               ? pagesChartLabel
                               : name === "organicTraffic"
                                 ? "Organic traffic"
-                                : "Organic keywords";
+                                : keywordsChartLabel;
                           const shown = name === "organicTraffic" && n >= 1000 ? `${(n / 1000).toFixed(1)}K` : n;
                           return [shown, label];
                         }}

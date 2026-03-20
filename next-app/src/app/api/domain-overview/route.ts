@@ -3,7 +3,11 @@ import { isDataforseoConfigured, fetchKeywordsForSite, fetchHistoricalRankOvervi
 import { getOverviewCached, setOverviewCached, invalidateOverviewCache } from "@/lib/overview-cache";
 import { DEFAULT_LOCATION_CODE } from "@/lib/locations";
 import { fetchGa4OrganicSessionsDaily, fetchGa4OrganicSessionsMonthly, getAccessTokenFromRefreshToken, getGa4RefreshToken } from "@/lib/ga4";
-import { mergeGscPagesIntoHistory } from "@/lib/gsc";
+import {
+  countDistinctQueriesLastNDays,
+  mergeGscPagesIntoHistory,
+  mergeGscQueriesIntoHistory,
+} from "@/lib/gsc";
 
 export type DomainOverviewApiResponse = {
   ok: boolean;
@@ -15,6 +19,7 @@ export type DomainOverviewApiResponse = {
   history?: { date: string; organicPages: number; organicTraffic: number; organicKeywords?: number }[];
   /** Set when historical_rank_overview failed (e.g. domain not in index, rate limit) */
   historyError?: string;
+  /** Distinct ranking keywords (DataForSEO) or distinct search queries last 28 days (GSC when site linked). */
   keywordCount?: number;
   totalSearchVolume?: number;
   topKeywords?: { keyword: string; searchVolume: number; cpc?: number | null; position?: number | null; url?: string | null; keywordDifficulty?: number | null; intent?: string | null }[];
@@ -59,7 +64,7 @@ export async function GET(request: NextRequest) {
     return Response.json({ ...cachedMonthly, cached: true });
   }
 
-  async function tryMergeSearchConsolePages(payload: DomainOverviewApiResponse): Promise<string | undefined> {
+  async function tryApplySearchConsole(payload: DomainOverviewApiResponse): Promise<string | undefined> {
     if (!gscSiteUrl || !payload.history?.length) return undefined;
     try {
       const refreshToken = await getGa4RefreshToken();
@@ -72,6 +77,17 @@ export async function GET(request: NextRequest) {
         siteUrl: gscSiteUrl,
         history: payload.history,
         granularity,
+      });
+      payload.history = await mergeGscQueriesIntoHistory({
+        accessToken,
+        siteUrl: gscSiteUrl,
+        history: payload.history,
+        granularity,
+      });
+      payload.keywordCount = await countDistinctQueriesLastNDays({
+        accessToken,
+        siteUrl: gscSiteUrl,
+        days: 28,
       });
       return undefined;
     } catch (err) {
@@ -88,7 +104,7 @@ export async function GET(request: NextRequest) {
       ...cachedMonthly,
       history: cachedMonthly.history ? cachedMonthly.history.map((h) => ({ ...h })) : undefined,
     };
-    const gscErr = await tryMergeSearchConsolePages(payload);
+    const gscErr = await tryApplySearchConsole(payload);
     if (gscErr) {
       payload.historyError = [payload.historyError, gscErr].filter(Boolean).join(" ");
     }
@@ -175,7 +191,7 @@ export async function GET(request: NextRequest) {
     }
 
     let history: NonNullable<DomainOverviewApiResponse["history"]> = (visibilityResult.history ?? []) as NonNullable<DomainOverviewApiResponse["history"]>;
-    if (history.length > 0 && keywordsResult.keywordCount != null) {
+    if (history.length > 0 && keywordsResult.keywordCount != null && !gscSiteUrl) {
       history = [...history];
       const last = history[history.length - 1];
       history[history.length - 1] = { ...last, organicKeywords: keywordsResult.keywordCount };
@@ -200,7 +216,7 @@ export async function GET(request: NextRequest) {
               date: r.date,
               organicPages: lastOrganicCount,
               organicTraffic: r.sessions,
-              organicKeywords: lastKeywordCount,
+              organicKeywords: gscSiteUrl ? 0 : lastKeywordCount,
             }));
           } else {
             // Request Organic Search sessions without country filter so the chart matches
@@ -251,7 +267,7 @@ export async function GET(request: NextRequest) {
               ...payload,
               history: (() => {
                 const h = (visibilityResult.history ?? []) as NonNullable<DomainOverviewApiResponse["history"]>;
-                if (h.length > 0 && keywordsResult.keywordCount != null) {
+                if (h.length > 0 && keywordsResult.keywordCount != null && !gscSiteUrl) {
                   const out = [...h];
                   const last = out[out.length - 1];
                   out[out.length - 1] = { ...last, organicKeywords: keywordsResult.keywordCount };
@@ -262,7 +278,7 @@ export async function GET(request: NextRequest) {
             };
       setOverviewCached(domain, structuredClone(toCache), undefined, locationCode);
     }
-    const gscErr = await tryMergeSearchConsolePages(payload);
+    const gscErr = await tryApplySearchConsole(payload);
     if (gscErr) {
       payload.historyError = [payload.historyError, gscErr].filter(Boolean).join(" ");
     }
