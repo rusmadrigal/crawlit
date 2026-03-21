@@ -21,12 +21,21 @@ import {
   mergeGscQueriesIntoHistory,
 } from "@/lib/gsc";
 
+/** GA4 Organic Search sessions: last full month vs same month last year, for YoY widget. */
+export type Ga4OrganicTrafficYoY = {
+  lastMonthSessions: number;
+  sameMonthLastYearSessions: number;
+  changePercent: number; // e.g. 5.3 or -2.1
+};
+
 export type DomainOverviewApiResponse = {
   ok: boolean;
   configured: boolean;
   domain?: string;
   visibilityEtv?: number | null;
   organicCount?: number | null;
+  /** GA4 Organic Search YoY (last month vs same month last year). Only when GA4 connected. */
+  ga4OrganicTrafficYoY?: Ga4OrganicTrafficYoY | null;
   /** Time series for Performance chart: { date, organicPages, organicTraffic, organicKeywords? } */
   history?: { date: string; organicPages: number; organicTraffic: number; organicKeywords?: number }[];
   /** Set when historical_rank_overview failed (e.g. domain not in index, rate limit) */
@@ -328,6 +337,7 @@ export async function GET(request: NextRequest) {
 
     // Replace organicTraffic with GA4 Organic Search sessions when GA4 is connected.
     let ga4TrafficError: string | undefined = undefined;
+    let ga4OrganicTrafficYoY: DomainOverviewApiResponse["ga4OrganicTrafficYoY"] = null;
     if (ga4PropertyId) {
       try {
         const refreshToken = await getGa4RefreshToken();
@@ -335,35 +345,61 @@ export async function GET(request: NextRequest) {
           const accessToken = await getAccessTokenFromRefreshToken(refreshToken);
           const lastOrganicCount = visibilityResult.organicCount ?? 0;
           const lastKeywordCount = keywordsResult.keywordCount ?? 0;
+
+          // Always fetch monthly for MoM widget (last month vs previous month).
+          let gaMonthly: { date: string; sessions: number }[];
+          let gaDailyOrNull: { date: string; sessions: number }[] | null = null;
           if (granularity === "daily") {
-            const gaDaily = await fetchGa4OrganicSessionsDaily({
+            const [monthly, daily] = await Promise.all([
+              fetchGa4OrganicSessionsMonthly({ accessToken, propertyId: ga4PropertyId, months: 24 }),
+              fetchGa4OrganicSessionsDaily({ accessToken, propertyId: ga4PropertyId, days }),
+            ]);
+            gaMonthly = monthly;
+            gaDailyOrNull = daily;
+          } else {
+            gaMonthly = await fetchGa4OrganicSessionsMonthly({
               accessToken,
               propertyId: ga4PropertyId,
-              days,
+              months: 24,
             });
-            history = gaDaily.map((r) => ({
+          }
+
+          if (granularity === "daily" && gaDailyOrNull) {
+            history = gaDailyOrNull.map((r) => ({
               date: r.date,
               organicPages: lastOrganicCount,
               organicTraffic: r.sessions,
               organicKeywords: gscSiteUrl ? 0 : lastKeywordCount,
             }));
           } else {
-            // Request Organic Search sessions without country filter so the chart matches
-            // GA4 "Traffic acquisition > Session primary channel group = Organic Search" (all countries).
-            const gaSeries = await fetchGa4OrganicSessionsMonthly({
-              accessToken,
-              propertyId: ga4PropertyId,
-              months: 24,
-            });
-            const gaByDate = new Map(gaSeries.map((r) => [r.date, r.sessions]));
+            const gaByDate = new Map(gaMonthly.map((r) => [r.date, r.sessions]));
             if (history.length > 0) {
               history = history.map((p) => ({
                 ...p,
                 organicTraffic: gaByDate.get(p.date) ?? 0,
               }));
             } else {
-              history = gaSeries.map((r) => ({ date: r.date, organicPages: 0, organicTraffic: r.sessions }));
+              history = gaMonthly.map((r) => ({ date: r.date, organicPages: 0, organicTraffic: r.sessions }));
             }
+          }
+
+          // Compute YoY: last full month vs same month last year.
+          const lastMonth = gaMonthly[gaMonthly.length - 1];
+          const sameMonthLastYear = gaMonthly.find((r) => {
+            const [y, m] = r.date.split("-").map(Number);
+            if (!lastMonth) return false;
+            const [ly, lm] = lastMonth.date.split("-").map(Number);
+            return y === ly - 1 && m === lm;
+          });
+          if (lastMonth && sameMonthLastYear) {
+            const prev = sameMonthLastYear.sessions;
+            const curr = lastMonth.sessions;
+            const changePercent = prev > 0 ? Math.round(((curr - prev) / prev) * 1000) / 10 : (curr > 0 ? 100 : 0);
+            ga4OrganicTrafficYoY = {
+              lastMonthSessions: curr,
+              sameMonthLastYearSessions: prev,
+              changePercent,
+            };
           }
         }
       } catch (gaErr) {
@@ -379,6 +415,7 @@ export async function GET(request: NextRequest) {
       domain,
       visibilityEtv: visibilityResult.visibilityEtv,
       organicCount: visibilityResult.organicCount,
+      ga4OrganicTrafficYoY,
       history,
       historyError: visibilityResult.historyError || ga4TrafficError,
       keywordCount: keywordsResult.keywordCount,

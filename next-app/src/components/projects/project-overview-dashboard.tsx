@@ -914,9 +914,16 @@ function SortableHeader({
 
 type HistoryPoint = { date: string; organicPages: number; organicTraffic: number; organicKeywords?: number };
 
+type Ga4OrganicTrafficYoY = {
+  lastMonthSessions: number;
+  sameMonthLastYearSessions: number;
+  changePercent: number;
+};
+
 type OverviewData = {
   visibilityEtv?: number | null;
   organicCount?: number | null;
+  ga4OrganicTrafficYoY?: Ga4OrganicTrafficYoY | null;
   history?: HistoryPoint[];
   historyError?: string;
   keywordCount?: number;
@@ -1010,6 +1017,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
         setOverviewData({
           visibilityEtv: data.visibilityEtv,
           organicCount: data.organicCount,
+          ga4OrganicTrafficYoY: data.ga4OrganicTrafficYoY ?? null,
           history: data.history,
           historyError: data.historyError,
           keywordCount: data.keywordCount,
@@ -1259,7 +1267,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm font-medium" style={{ color: "var(--muted)" }}>
               <TrendingUp className="size-4" aria-hidden />
-              Visibility
+              Organic traffic YoY
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -1267,33 +1275,45 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
               <Loader2 className="size-6 animate-spin" style={{ color: "var(--muted)" }} aria-hidden />
             ) : overviewError ? (
               <p className="text-sm" style={{ color: "var(--muted)" }}>{overviewError}</p>
-            ) : overviewData?.visibilityEtv != null && overviewData.visibilityEtv > 0 ? (
+            ) : overviewData?.ga4OrganicTrafficYoY ? (
               <>
-                <p className="text-2xl font-semibold tabular-nums" style={{ color: "var(--foreground)" }}>
-                  {overviewData.visibilityEtv >= 1000
-                    ? `${(overviewData.visibilityEtv / 1000).toFixed(1)}K`
-                    : overviewData.visibilityEtv.toLocaleString()}
-                </p>
+                <div className="flex items-baseline gap-2">
+                  <p className="text-2xl font-semibold tabular-nums" style={{ color: "var(--foreground)" }}>
+                    {overviewData.ga4OrganicTrafficYoY.lastMonthSessions >= 1000
+                      ? `${(overviewData.ga4OrganicTrafficYoY.lastMonthSessions / 1000).toFixed(1)}K`
+                      : overviewData.ga4OrganicTrafficYoY.lastMonthSessions.toLocaleString()}
+                  </p>
+                  <span
+                    className="text-sm font-medium tabular-nums"
+                    style={{
+                      color:
+                        overviewData.ga4OrganicTrafficYoY.changePercent > 0
+                          ? "#16a34a"
+                          : overviewData.ga4OrganicTrafficYoY.changePercent < 0
+                            ? "#dc2626"
+                            : "var(--muted)",
+                    }}
+                  >
+                    {overviewData.ga4OrganicTrafficYoY.changePercent > 0 ? "+" : ""}
+                    {overviewData.ga4OrganicTrafficYoY.changePercent}%
+                  </span>
+                </div>
                 <p className="text-xs" style={{ color: "var(--muted)" }}>
-                  {overviewData.cached ? "Cached · " : ""}Est. monthly traffic
+                  {overviewData.cached ? "Cached · " : ""}Last month vs same month last year (GA4)
                 </p>
               </>
-            ) : overviewData?.totalSearchVolume != null && overviewData.totalSearchVolume > 0 ? (
+            ) : project?.ga4PropertyId ? (
               <>
-                <p className="text-2xl font-semibold tabular-nums" style={{ color: "var(--foreground)" }}>
-                  {overviewData.totalSearchVolume >= 1000
-                    ? `${(overviewData.totalSearchVolume / 1000).toFixed(1)}K`
-                    : overviewData.totalSearchVolume.toLocaleString()}
-                </p>
+                <p className="text-2xl font-semibold tabular-nums" style={{ color: "var(--foreground)" }}>—</p>
                 <p className="text-xs" style={{ color: "var(--muted)" }}>
-                  {overviewData.cached ? "Cached · " : ""}Keyword volume (est.)
+                  No organic traffic data in GA4 for last 24 months
                 </p>
               </>
             ) : (
               <>
                 <p className="text-2xl font-semibold tabular-nums" style={{ color: "var(--foreground)" }}>—</p>
                 <p className="text-xs" style={{ color: "var(--muted)" }}>
-                  {overviewData?.keywordCount !== undefined ? "No traffic data" : "Add API key to load"}
+                  Connect GA4 to see organic traffic YoY
                 </p>
               </>
             )}
@@ -1460,7 +1480,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                             {
                               date: `${y}-${m}-01`,
                               organicPages: overviewData?.organicCount ?? 0,
-                              organicTraffic: overviewData?.visibilityEtv ?? overviewData?.totalSearchVolume ?? 0,
+                              organicTraffic: overviewData?.ga4OrganicTrafficYoY?.lastMonthSessions ?? overviewData?.visibilityEtv ?? overviewData?.totalSearchVolume ?? 0,
                             },
                           ];
                         })()) as HistoryPoint[];
@@ -1489,7 +1509,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
               const rawHistory = overviewData.history && overviewData.history.length > 0
                 ? overviewData.history
                 : null;
-              const fallbackPoint: HistoryPoint[] = !rawHistory && (overviewData.organicCount != null || overviewData.visibilityEtv != null || (overviewData.totalSearchVolume != null && overviewData.totalSearchVolume > 0))
+              const fallbackPoint: HistoryPoint[] = !rawHistory && (overviewData.organicCount != null || overviewData.ga4OrganicTrafficYoY != null || overviewData.visibilityEtv != null || (overviewData.totalSearchVolume != null && overviewData.totalSearchVolume > 0))
                 ? (() => {
                     const now = new Date();
                     const y = now.getFullYear();
@@ -1498,7 +1518,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                       {
                         date: `${y}-${m}-01`,
                         organicPages: overviewData.organicCount ?? 0,
-                        organicTraffic: Math.round(Number(overviewData.visibilityEtv ?? overviewData.totalSearchVolume ?? 0)),
+                        organicTraffic: Math.round(Number(overviewData.ga4OrganicTrafficYoY?.lastMonthSessions ?? overviewData.visibilityEtv ?? overviewData.totalSearchVolume ?? 0)),
                         organicKeywords: overviewData.keywordCount ?? undefined,
                       },
                     ];
