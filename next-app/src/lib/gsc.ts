@@ -236,6 +236,42 @@ export function startDateMinusCalendarMonths(endDate: string, months: number): s
   return `${yy}-${mm}-${dd}`;
 }
 
+/** Site-wide aggregate metrics (clicks, impressions, CTR) for a date range. No dimensions = single aggregate row. */
+export async function fetchGscSiteWideCtr(params: {
+  accessToken: string;
+  siteUrl: string;
+  startDate: string;
+  endDate: string;
+}): Promise<{ clicks: number; impressions: number; ctr: number } | null> {
+  const path = encodeSitePath(params.siteUrl);
+  const res = await fetch(`${GSC_API}/sites/${path}/searchAnalytics/query`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${params.accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      startDate: params.startDate,
+      endDate: params.endDate,
+      dataState: "final",
+    }),
+    cache: "no-store",
+  });
+  const json = (await res.json()) as {
+    rows?: Array<{ clicks?: number; impressions?: number; ctr?: number }>;
+    error?: { message?: string };
+  };
+  if (!res.ok) throw new Error(json.error?.message ?? "Search Console searchAnalytics query failed");
+  const row = json.rows?.[0];
+  if (!row) return null;
+  const clicks = typeof row.clicks === "number" ? row.clicks : 0;
+  const impressions = typeof row.impressions === "number" ? row.impressions : 0;
+  // GSC API returns ctr as decimal (0–1); convert to percentage (0–100)
+  const ctrRaw = typeof row.ctr === "number" ? row.ctr : impressions > 0 ? clicks / impressions : 0;
+  const ctr = Math.round(ctrRaw * 10000) / 100; // e.g. 2.34 for 2.34%
+  return { clicks, impressions, ctr };
+}
+
 /** Inclusive date range for the last N days ending yesterday (UTC). */
 export function gscDateRangeLastNDays(days: number = 28): { startDate: string; endDate: string } {
   const n = Math.min(366, Math.max(1, days));

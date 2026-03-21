@@ -928,6 +928,7 @@ type OverviewData = {
   historyError?: string;
   keywordCount?: number;
   totalSearchVolume?: number;
+  gscCtr?: number | null;
   topKeywords?: TopKeywordRow[];
   /** GSC order (28d); volume from DataForSEO Google Ads; KD/intent from DataForSEO. */
   topKeywordsFromGsc?: boolean;
@@ -962,7 +963,7 @@ const overviewActions = [
 ] as const;
 
 export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
-  const { projects, deleteProject, updateProject } = useProjects();
+  const { projects, projectsLoaded, deleteProject, updateProject } = useProjects();
   const project = projects.find((p) => p.id === projectId);
   const [overviewData, setOverviewData] = useState<OverviewData>(null);
   const [overviewLoading, setOverviewLoading] = useState(false);
@@ -1022,6 +1023,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
           historyError: data.historyError,
           keywordCount: data.keywordCount,
           totalSearchVolume: data.totalSearchVolume,
+          gscCtr: data.gscCtr ?? null,
           topKeywords: data.topKeywords,
           topKeywordsFromGsc: data.topKeywordsFromGsc === true,
           cached: data.cached,
@@ -1110,6 +1112,30 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
 
   const isLoading = overviewLoading && !overviewData;
   const isRefreshing = refreshing;
+
+  if (!projectsLoaded) {
+    return (
+      <div className="flex min-h-[240px] items-center justify-center">
+        <Loader2 className="size-8 animate-spin" style={{ color: "var(--muted)" }} aria-hidden />
+      </div>
+    );
+  }
+
+  if (!project) {
+    return (
+      <div className="space-y-4">
+        <h1 className="text-2xl font-semibold tracking-tight" style={{ color: "var(--foreground)" }}>
+          Project not found
+        </h1>
+        <p className="text-sm" style={{ color: "var(--muted)" }}>
+          This project may have been deleted or the link is invalid.{" "}
+          <Link href="/" className="font-medium underline" style={{ color: "var(--primary)" }}>
+            Back to projects
+          </Link>
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8">
@@ -1353,27 +1379,30 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm font-medium" style={{ color: "var(--muted)" }}>
               <FileText className="size-4" aria-hidden />
-              Total search volume
+              CTR
             </CardTitle>
           </CardHeader>
           <CardContent>
             {isLoading ? (
               <Loader2 className="size-6 animate-spin" style={{ color: "var(--muted)" }} aria-hidden />
-            ) : overviewData?.totalSearchVolume !== undefined ? (
+            ) : overviewData?.gscCtr != null ? (
               <>
                 <p className="text-2xl font-semibold tabular-nums" style={{ color: "var(--foreground)" }}>
-                  {overviewData.totalSearchVolume >= 1000
-                    ? `${(overviewData.totalSearchVolume / 1000).toFixed(1)}K`
-                    : overviewData.totalSearchVolume.toLocaleString()}
+                  {overviewData.gscCtr.toFixed(2)}%
                 </p>
                 <p className="text-xs" style={{ color: "var(--muted)" }}>
-                  Est. monthly
+                  {overviewData.cached ? "Cached · " : ""}Last 28 days (GSC)
                 </p>
+              </>
+            ) : project?.gscSiteUrl ? (
+              <>
+                <p className="text-2xl font-semibold tabular-nums" style={{ color: "var(--foreground)" }}>—</p>
+                <p className="text-xs" style={{ color: "var(--muted)" }}>No CTR data in GSC</p>
               </>
             ) : (
               <>
                 <p className="text-2xl font-semibold tabular-nums" style={{ color: "var(--foreground)" }}>—</p>
-                <p className="text-xs" style={{ color: "var(--muted)" }}>From keywords data</p>
+                <p className="text-xs" style={{ color: "var(--muted)" }}>Connect GSC to see CTR</p>
               </>
             )}
           </CardContent>

@@ -1,11 +1,11 @@
 import type { Project } from "@/types/project";
 
-const STORAGE_KEY = "crawit-projects";
+export const PROJECTS_STORAGE_KEY = "crawit-projects";
 
 export function getProjects(): Project[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(PROJECTS_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
     return Array.isArray(parsed) ? parsed : [];
@@ -16,7 +16,7 @@ export function getProjects(): Project[] {
 
 export function saveProjects(projects: Project[]): void {
   if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
+  localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(projects));
 }
 
 /** Normalize domain for display and slug: strip protocol, lowercase, trim. */

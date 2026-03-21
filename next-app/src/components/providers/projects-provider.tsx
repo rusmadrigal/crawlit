@@ -3,10 +3,12 @@
 import * as React from "react";
 import { usePathname, useRouter } from "next/navigation";
 import type { Project } from "@/types/project";
-import { getProjects, addProject as addProjectStorage, getProjectById, deleteProject as deleteProjectStorage, updateProject as updateProjectStorage } from "@/lib/projects";
+import { getProjects, addProject as addProjectStorage, getProjectById, deleteProject as deleteProjectStorage, updateProject as updateProjectStorage, PROJECTS_STORAGE_KEY } from "@/lib/projects";
 
 type ProjectsContextValue = {
   projects: Project[];
+  /** False until we have read from localStorage (avoids showing "Create project" before load). */
+  projectsLoaded: boolean;
   currentProjectId: string | null;
   currentProject: Project | null;
   addProject: (domain: string, name?: string, locationCode?: number, locationName?: string) => Project;
@@ -21,6 +23,7 @@ export function ProjectsProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [projects, setProjects] = React.useState<Project[]>([]);
+  const [projectsLoaded, setProjectsLoaded] = React.useState(false);
 
   const refreshProjects = React.useCallback(() => {
     setProjects(getProjects());
@@ -28,7 +31,24 @@ export function ProjectsProvider({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     setProjects(getProjects());
+    setProjectsLoaded(true);
   }, [pathname]);
+
+  // Sync projects when another tab changes localStorage
+  React.useEffect(() => {
+    function handleStorage(e: StorageEvent) {
+      if (e.key === PROJECTS_STORAGE_KEY && e.newValue !== null) {
+        try {
+          const parsed = JSON.parse(e.newValue) as unknown;
+          setProjects(Array.isArray(parsed) ? parsed : getProjects());
+        } catch {
+          setProjects(getProjects());
+        }
+      }
+    }
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
 
   const currentProjectId = React.useMemo(() => {
     const match = pathname?.match(/^\/p\/([^/]+)/);
@@ -66,6 +86,7 @@ export function ProjectsProvider({ children }: { children: React.ReactNode }) {
   const value = React.useMemo<ProjectsContextValue>(
     () => ({
       projects,
+      projectsLoaded,
       currentProjectId,
       currentProject,
       addProject,
@@ -73,7 +94,7 @@ export function ProjectsProvider({ children }: { children: React.ReactNode }) {
       updateProject,
       refreshProjects,
     }),
-    [projects, currentProjectId, currentProject, addProject, deleteProject, updateProject, refreshProjects]
+    [projects, projectsLoaded, currentProjectId, currentProject, addProject, deleteProject, updateProject, refreshProjects]
   );
 
   return <ProjectsContext.Provider value={value}>{children}</ProjectsContext.Provider>;

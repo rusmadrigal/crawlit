@@ -5,10 +5,10 @@ import Link from "next/link";
 import { useProjects } from "@/components/providers/projects-provider";
 import { NewProjectForm } from "@/components/projects/new-project-form";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Globe, Plus, Trash2 } from "lucide-react";
+import { Globe, Loader2, Plus, Trash2 } from "lucide-react";
 
 export function ProjectsDashboard() {
-  const { projects, deleteProject } = useProjects();
+  const { projects, projectsLoaded, deleteProject } = useProjects();
   const [showNewForm, setShowNewForm] = useState(false);
 
   return (
@@ -20,9 +20,20 @@ export function ProjectsDashboard() {
         <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
           Each project tracks one domain. Create a project to start keyword research and SEO tools for that domain.
         </p>
+        <p className="mt-0.5 text-xs" style={{ color: "var(--muted)", opacity: 0.9 }}>
+          Projects are stored in your browser. Clearing site data, using incognito, or switching browsers will reset them.
+        </p>
       </div>
 
-      {projects.length === 0 && !showNewForm && (
+      {!projectsLoaded && (
+        <Card>
+          <CardContent className="flex items-center justify-center py-12">
+            <Loader2 className="size-8 animate-spin" style={{ color: "var(--muted)" }} aria-hidden />
+          </CardContent>
+        </Card>
+      )}
+
+      {projectsLoaded && projects.length === 0 && !showNewForm && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -39,7 +50,7 @@ export function ProjectsDashboard() {
         </Card>
       )}
 
-      {projects.length > 0 && (
+      {projectsLoaded && projects.length > 0 && (
         <div className="grid gap-4 sm:grid-cols-2">
           {projects.map((project) => (
             <Card key={project.id} className="relative transition-shadow hover:shadow-md">

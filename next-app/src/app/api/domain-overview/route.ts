@@ -14,6 +14,7 @@ import { fetchGa4OrganicSessionsDaily, fetchGa4OrganicSessionsMonthly, getAccess
 import {
   countDistinctQueriesLastNDays,
   fetchGscBestPagePerQueryInRange,
+  fetchGscSiteWideCtr,
   fetchGscTopQueriesPositionHistories,
   fetchTopQueriesFromGsc,
   gscDateRangeLastNDays,
@@ -43,6 +44,8 @@ export type DomainOverviewApiResponse = {
   /** Distinct ranking keywords (DataForSEO) or distinct search queries last 28 days (GSC when site linked). */
   keywordCount?: number;
   totalSearchVolume?: number;
+  /** GSC site-wide CTR (last 28 days), percentage e.g. 2.34. Only when GSC connected. */
+  gscCtr?: number | null;
   topKeywords?: {
     keyword: string;
     searchVolume: number;
@@ -121,6 +124,14 @@ export async function GET(request: NextRequest) {
         siteUrl: gscSiteUrl,
         days: 28,
       });
+
+      try {
+        const { startDate, endDate } = gscDateRangeLastNDays(28);
+        const ctrResult = await fetchGscSiteWideCtr({ accessToken, siteUrl: gscSiteUrl, startDate, endDate });
+        payload.gscCtr = ctrResult?.ctr ?? null;
+      } catch {
+        payload.gscCtr = null;
+      }
 
       try {
         const { startDate, endDate } = gscDateRangeLastNDays(28);
