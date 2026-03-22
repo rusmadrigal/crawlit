@@ -27,8 +27,9 @@ model Project {
   locationName    String?
   ga4PropertyId   String?
   ga4PropertyName String?
-  gscSiteUrl      String?
-  gscSiteLabel    String?
+  gscSiteUrl         String?
+  gscSiteLabel       String?
+  googleAdsCustomerId String?
   performanceNotes String? // JSON string of PerformanceNote[]
   createdAt       DateTime @default(now())
   users           UserProject[]

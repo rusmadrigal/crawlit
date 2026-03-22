@@ -30,6 +30,7 @@ export async function GET() {
         ga4PropertyName: p.ga4PropertyName,
         gscSiteUrl: p.gscSiteUrl,
         gscSiteLabel: p.gscSiteLabel,
+        googleAdsCustomerId: p.googleAdsCustomerId,
         performanceNotes: p.performanceNotes ? JSON.parse(p.performanceNotes) : undefined,
         createdAt: p.createdAt,
       }))

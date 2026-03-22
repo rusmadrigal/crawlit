@@ -6,10 +6,11 @@ const GA_OAUTH_STATE_COOKIE = "crawlit_ga4_oauth_state";
 export type Ga4Property = { propertyId: string; displayName: string };
 export const GA4_COOKIE_NAMES = { refresh: GA_REFRESH_COOKIE, state: GA_OAUTH_STATE_COOKIE } as const;
 
-/** Single OAuth client for GA4 + Search Console (same refresh token must cover both). */
+/** Single OAuth client for GA4 + Search Console + Google Ads (same refresh token covers all). */
 export const GOOGLE_OAUTH_SCOPES = [
   "https://www.googleapis.com/auth/analytics.readonly",
   "https://www.googleapis.com/auth/webmasters.readonly",
+  "https://www.googleapis.com/auth/adwords",
 ] as const;
 
 export function ga4CookieOptions(maxAgeSeconds: number) {

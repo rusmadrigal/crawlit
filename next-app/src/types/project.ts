@@ -26,6 +26,8 @@ export type Project = {
   gscSiteUrl?: string;
   /** Optional label for the selected GSC property. */
   gscSiteLabel?: string;
+  /** Google Ads customer ID (e.g. 123-456-7890) for keyword volume/competition from Keyword Planner. */
+  googleAdsCustomerId?: string;
   /** Notes on the Performance chart by date. */
   performanceNotes?: PerformanceNote[];
   createdAt: string;

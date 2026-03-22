@@ -58,7 +58,7 @@ export type DomainOverviewApiResponse = {
     /** Daily average position (GSC), oldest→newest; same window as top queries (e.g. 28d). */
     positionHistory?: number[];
   }[];
-  /** True when rows are ordered from GSC (last 28d, by clicks); volume from DataForSEO Google Ads; intent/KD from DataForSEO. */
+  /** True when rows are ordered from GSC (last 28d, by clicks); volume/KD/intent from DataForSEO (or cache when API off). */
   topKeywordsFromGsc?: boolean;
   cached?: boolean;
   error?: string;
@@ -270,48 +270,48 @@ export async function GET(request: NextRequest) {
         } else {
           const queries = top.map((r) => r.query);
 
-          let volSettled: PromiseSettledResult<Map<string, { searchVolume: number | null; cpc: number | null }>>;
-          let intentSettled: PromiseSettledResult<Record<string, string>>;
-          let pagesSettled: PromiseSettledResult<Map<string, string>>;
-          let kdSettled: PromiseSettledResult<Map<string, number>>;
-
-          if (skipDataforseo) {
-            volSettled = { status: "fulfilled", value: new Map() };
-            intentSettled = { status: "fulfilled", value: {} };
-            kdSettled = { status: "fulfilled", value: new Map() };
-            try {
-              const pages = await fetchGscBestPagePerQueryInRange({
-                accessToken,
-                siteUrl: gscSiteUrl,
-                startDate,
-                endDate,
-                queries,
+          const cachedByKw = new Map<string, { searchVolume: number; keywordDifficulty: number | null; intent: string | null }>();
+          for (const row of payload.topKeywords ?? []) {
+            const k = row.keyword?.trim().toLowerCase();
+            if (k && (row.searchVolume != null || row.keywordDifficulty != null || row.intent != null)) {
+              cachedByKw.set(k, {
+                searchVolume: typeof row.searchVolume === "number" ? row.searchVolume : 0,
+                keywordDifficulty: row.keywordDifficulty ?? null,
+                intent: row.intent ?? null,
               });
-              pagesSettled = { status: "fulfilled", value: pages };
-            } catch {
-              pagesSettled = { status: "rejected", reason: undefined };
             }
-          } else {
-            [volSettled, intentSettled, pagesSettled, kdSettled] = await Promise.allSettled([
-              fetchKeywordSearchVolumes(queries, locationCode, "en"),
-              fetchSearchIntent(queries.filter((q) => q.trim().length >= 3), "en"),
-              fetchGscBestPagePerQueryInRange({
-                accessToken,
-                siteUrl: gscSiteUrl,
-                startDate,
-                endDate,
-                queries,
-              }),
-              fetchKeywordDifficulties(queries, locationCode, "en"),
-            ]);
           }
+          const [pagesSettled, volSettled, intentSettled, kdSettled] = skipDataforseo
+            ? await Promise.allSettled([
+                fetchGscBestPagePerQueryInRange({
+                  accessToken,
+                  siteUrl: gscSiteUrl,
+                  startDate,
+                  endDate,
+                  queries,
+                }),
+                Promise.resolve(new Map<string, { searchVolume: number | null; cpc: number | null }>()),
+                Promise.resolve({} as Record<string, string>),
+                Promise.resolve(new Map<string, number>()),
+              ])
+            : await Promise.allSettled([
+                fetchGscBestPagePerQueryInRange({
+                  accessToken,
+                  siteUrl: gscSiteUrl,
+                  startDate,
+                  endDate,
+                  queries,
+                }),
+                fetchKeywordSearchVolumes(queries, locationCode, "en"),
+                fetchSearchIntent(queries.filter((q) => q.trim().length >= 3), "en"),
+                fetchKeywordDifficulties(queries, locationCode, "en"),
+              ]);
+          const pageByQuery = pagesSettled.status === "fulfilled" ? pagesSettled.value : new Map<string, string>();
           const volumeByKeyword =
             volSettled.status === "fulfilled"
               ? volSettled.value
               : new Map<string, { searchVolume: number | null; cpc: number | null }>();
           const intentByKeyword = intentSettled.status === "fulfilled" ? intentSettled.value : {};
-          const pageByQuery =
-            pagesSettled.status === "fulfilled" ? pagesSettled.value : new Map<string, string>();
           const kdByKeyword = kdSettled.status === "fulfilled" ? kdSettled.value : new Map<string, number>();
 
           let positionHistories = new Map<string, number[]>();
@@ -331,17 +331,25 @@ export async function GET(request: NextRequest) {
           payload.topKeywords = top.map((r) => {
             const key = r.query.trim().toLowerCase();
             const vol = volumeByKeyword.get(key);
+            const cached = cachedByKw.get(key);
             const searchVolume =
-              vol?.searchVolume != null ? vol.searchVolume : r.impressions;
+              vol?.searchVolume != null
+                ? vol.searchVolume
+                : cached?.searchVolume != null
+                  ? cached.searchVolume
+                  : r.impressions;
             const landing = pageByQuery.get(key) ?? null;
             const positionHistory = positionHistories.get(key) ?? [];
+            const kd = kdByKeyword.get(key) ?? cached?.keywordDifficulty ?? null;
+            const intent =
+              (intentByKeyword[r.query] ?? intentByKeyword[r.query.toLowerCase()] ?? cached?.intent ?? null) as string | null;
             return {
               keyword: r.query,
               searchVolume,
               position: Math.round(r.position * 10) / 10,
               url: landing,
-              keywordDifficulty: kdByKeyword.get(key) ?? null,
-              intent: (intentByKeyword[r.query] ?? intentByKeyword[r.query.toLowerCase()] ?? null) as string | null,
+              keywordDifficulty: kd,
+              intent,
               positionHistory,
             };
           });
@@ -365,7 +373,7 @@ export async function GET(request: NextRequest) {
       ...cachedMonthly,
       history: cachedMonthly.history ? cachedMonthly.history.map((h) => ({ ...h })) : undefined,
     };
-    const gscErr = await tryApplySearchConsole(payload);
+    const gscErr = await tryApplySearchConsole(payload, false);
     if (gscErr) {
       payload.historyError = [payload.historyError, gscErr].filter(Boolean).join(" ");
     }
@@ -594,7 +602,7 @@ export async function GET(request: NextRequest) {
             };
       setOverviewCached(domain, structuredClone(toCache), undefined, locationCode);
     }
-    const gscErr = await tryApplySearchConsole(payload);
+    const gscErr = await tryApplySearchConsole(payload, false);
     if (gscErr) {
       payload.historyError = [payload.historyError, gscErr].filter(Boolean).join(" ");
     }

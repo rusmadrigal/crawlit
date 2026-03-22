@@ -932,7 +932,7 @@ type OverviewData = {
   totalSearchVolume?: number;
   gscCtr?: number | null;
   topKeywords?: TopKeywordRow[];
-  /** GSC order (28d); volume from DataForSEO Google Ads; KD/intent from DataForSEO. */
+  /** GSC order (28d); volume/KD/intent from DataForSEO (cached when API off). */
   topKeywordsFromGsc?: boolean;
   cached?: boolean;
 } | null;
@@ -1852,9 +1852,9 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
           </h2>
           {overviewData.topKeywordsFromGsc ? (
             <p className="mb-4 text-xs" style={{ color: "var(--muted)" }}>
-              Queries ordered by Search Console performance (last 28 days). Volume from DataForSEO (Google Ads search volume);
-              KD from DataForSEO Labs (bulk keyword difficulty); intent from DataForSEO. If Ads has no volume for a query,
-              GSC impressions are shown instead. Change compares average position in the last 7 days vs the previous 7 days
+              Queries ordered by Search Console performance (last 28 days). Volume, KD and intent from DataForSEO (cached when API off).
+              If DataForSEO has no volume, GSC impressions are shown. Change compares
+              average position in the last 7 days vs the previous 7 days
               (+ = better ranking).
             </p>
           ) : null}

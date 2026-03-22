@@ -11,6 +11,7 @@ const patchSchema = z.object({
   ga4PropertyName: z.string().nullable().optional(),
   gscSiteUrl: z.string().nullable().optional(),
   gscSiteLabel: z.string().nullable().optional(),
+  googleAdsCustomerId: z.string().nullable().optional(),
   performanceNotes: z.string().nullable().optional(),
 });
 
@@ -66,6 +67,7 @@ export async function PATCH(
   if (parsed.data.ga4PropertyName !== undefined) data.ga4PropertyName = parsed.data.ga4PropertyName;
   if (parsed.data.gscSiteUrl !== undefined) data.gscSiteUrl = parsed.data.gscSiteUrl;
   if (parsed.data.gscSiteLabel !== undefined) data.gscSiteLabel = parsed.data.gscSiteLabel;
+  if (parsed.data.googleAdsCustomerId !== undefined) data.googleAdsCustomerId = parsed.data.googleAdsCustomerId;
   if (parsed.data.performanceNotes !== undefined) {
     data.performanceNotes = parsed.data.performanceNotes
       ? JSON.stringify(parsed.data.performanceNotes)
