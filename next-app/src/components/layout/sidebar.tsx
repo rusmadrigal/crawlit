@@ -14,7 +14,11 @@ import {
   Plus,
   Search,
   LayoutGrid,
+  LogOut,
+  Settings,
+  SlidersHorizontal,
 } from "lucide-react";
+import { useAuth } from "@/components/providers/auth-provider";
 import { cn } from "@/lib/utils";
 import { useProjects } from "@/components/providers/projects-provider";
 import { Logo } from "@/components/layout/logo";
@@ -38,6 +42,7 @@ export function Sidebar({
 }) {
   const pathname = usePathname();
   const { projects, currentProject } = useProjects();
+  const { user, logout } = useAuth();
   const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
   const projectDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -183,6 +188,34 @@ export function Sidebar({
           )}
         </div>
       </div>
+      {user && (
+        <div className="space-y-1 border-t border-slate-800 p-3">
+          <Link
+            href="/config"
+            className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-400 transition-colors hover:bg-slate-800/60 hover:text-slate-200"
+          >
+            <SlidersHorizontal className="size-4 shrink-0" />
+            Settings
+          </Link>
+          {user.role === "admin" && (
+            <Link
+              href="/admin"
+              className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-400 transition-colors hover:bg-slate-800/60 hover:text-slate-200"
+            >
+              <Settings className="size-4 shrink-0" />
+              Admin
+            </Link>
+          )}
+          <button
+            type="button"
+            onClick={logout}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-400 transition-colors hover:bg-slate-800/60 hover:text-slate-200"
+          >
+            <LogOut className="size-4 shrink-0" />
+            Log out ({user.username})
+          </button>
+        </div>
+      )}
     </aside>
   );
 }

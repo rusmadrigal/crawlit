@@ -18,15 +18,17 @@ import {
   fetchGscTopQueriesPositionHistories,
   fetchTopQueriesFromGsc,
   gscDateRangeLastNDays,
+  lastDayOfMonthUtc,
   mergeGscPagesIntoHistory,
   mergeGscQueriesIntoHistory,
 } from "@/lib/gsc";
 
-/** GA4 Organic Search sessions: last full month vs same month last year, for YoY widget. */
-export type Ga4OrganicTrafficYoY = {
-  lastMonthSessions: number;
-  sameMonthLastYearSessions: number;
+/** Organic traffic YoY: last full month vs same month last year. From GA4 (sessions) or GSC (clicks). */
+export type OrganicTrafficYoY = {
+  lastMonth: number;
+  sameMonthLastYear: number;
   changePercent: number; // e.g. 5.3 or -2.1
+  source: "ga4" | "gsc";
 };
 
 export type DomainOverviewApiResponse = {
@@ -35,8 +37,8 @@ export type DomainOverviewApiResponse = {
   domain?: string;
   visibilityEtv?: number | null;
   organicCount?: number | null;
-  /** GA4 Organic Search YoY (last month vs same month last year). Only when GA4 connected. */
-  ga4OrganicTrafficYoY?: Ga4OrganicTrafficYoY | null;
+  /** Organic traffic YoY: from GSC (clicks) when connected, else GA4 (sessions). */
+  organicTrafficYoY?: OrganicTrafficYoY | null;
   /** Time series for Performance chart: { date, organicPages, organicTraffic, organicKeywords? } */
   history?: { date: string; organicPages: number; organicTraffic: number; organicKeywords?: number }[];
   /** Set when historical_rank_overview failed (e.g. domain not in index, rate limit) */
@@ -67,6 +69,7 @@ export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const domain = searchParams.get("domain")?.trim();
   const refresh = searchParams.get("refresh") === "1" || searchParams.get("refresh") === "true";
+  const dataforseoEnabled = searchParams.get("dataforseo_enabled") !== "0";
   const locationCode = Math.floor(Number(searchParams.get("location_code")) || DEFAULT_LOCATION_CODE);
   const ga4PropertyId = searchParams.get("ga4_property_id")?.trim() || null;
   const gscSiteUrl = searchParams.get("gsc_site_url")?.trim() || null;
@@ -87,6 +90,94 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // When DataForSEO API is disabled (client preference): use cache or build from GSC/GA4 only.
+  if (!dataforseoEnabled) {
+    const cached = getOverviewCached<DomainOverviewApiResponse>(domain, locationCode);
+    if (cached && cached.keywordCount !== undefined) {
+      const payload: DomainOverviewApiResponse = {
+        ...cached,
+        history: cached.history ? cached.history.map((h) => ({ ...h })) : undefined,
+      };
+      const gscErr = await tryApplySearchConsole(payload, true);
+      if (gscErr) {
+        payload.historyError = [payload.historyError, gscErr].filter(Boolean).join(" ");
+      }
+      return Response.json({ ...payload, cached: true });
+    }
+    // No cache: build payload from GSC and/or GA4 so the dashboard still shows data.
+    if (ga4PropertyId || gscSiteUrl) {
+      let history: NonNullable<DomainOverviewApiResponse["history"]> = [];
+      let organicTrafficYoY: DomainOverviewApiResponse["organicTrafficYoY"] = null;
+      let historyError: string | undefined;
+      if (ga4PropertyId) {
+        try {
+          const refreshToken = await getGa4RefreshToken();
+          if (refreshToken) {
+            const accessToken = await getAccessTokenFromRefreshToken(refreshToken);
+            const gaMonthly = await fetchGa4OrganicSessionsMonthly({
+              accessToken,
+              propertyId: ga4PropertyId,
+              months: 24,
+            });
+            history = gaMonthly.map((r) => ({ date: r.date, organicPages: 0, organicTraffic: r.sessions }));
+            const lastMonth = gaMonthly[gaMonthly.length - 1];
+            const sameMonthLastYear = gaMonthly.find((r) => {
+              const [y, m] = r.date.split("-").map(Number);
+              if (!lastMonth) return false;
+              const [ly, lm] = lastMonth.date.split("-").map(Number);
+              return y === ly - 1 && m === lm;
+            });
+            if (lastMonth && sameMonthLastYear) {
+              const prev = sameMonthLastYear.sessions;
+              const curr = lastMonth.sessions;
+              const changePercent = prev > 0 ? Math.round(((curr - prev) / prev) * 1000) / 10 : (curr > 0 ? 100 : 0);
+              organicTrafficYoY = { lastMonth: curr, sameMonthLastYear: prev, changePercent, source: "ga4" };
+            }
+          }
+        } catch (gaErr) {
+          historyError = gaErr instanceof Error ? gaErr.message : "Failed to load GA4 traffic";
+        }
+      }
+      if (history.length === 0 && gscSiteUrl) {
+        const now = new Date();
+        for (let i = 23; i >= 0; i--) {
+          const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+          const y = d.getUTCFullYear();
+          const m = d.getUTCMonth() + 1;
+          history.push({ date: `${y}-${String(m).padStart(2, "0")}-01`, organicPages: 0, organicTraffic: 0 });
+        }
+      }
+      const payload: DomainOverviewApiResponse = {
+        ok: true,
+        configured: true,
+        domain,
+        visibilityEtv: null,
+        organicCount: null,
+        organicTrafficYoY: organicTrafficYoY ?? undefined,
+        history,
+        historyError,
+        keywordCount: undefined,
+        totalSearchVolume: undefined,
+        topKeywords: [],
+        cached: false,
+      };
+      const gscErr = await tryApplySearchConsole(payload, true);
+      if (gscErr) {
+        payload.historyError = [payload.historyError, gscErr].filter(Boolean).join(" ");
+      }
+      return Response.json(payload);
+    }
+    return Response.json(
+      {
+        ok: false,
+        configured: true,
+        domain,
+        error: "DataForSEO API is disabled. Connect GA4 or GSC to see data without the API, or enable it in Settings.",
+      } satisfies DomainOverviewApiResponse,
+      { status: 200 }
+    );
+  }
+
   if (refresh) {
     invalidateOverviewCache(domain, locationCode);
   }
@@ -99,7 +190,7 @@ export async function GET(request: NextRequest) {
     return Response.json({ ...cachedMonthly, cached: true });
   }
 
-  async function tryApplySearchConsole(payload: DomainOverviewApiResponse): Promise<string | undefined> {
+  async function tryApplySearchConsole(payload: DomainOverviewApiResponse, skipDataforseo = false): Promise<string | undefined> {
     if (!gscSiteUrl || !payload.history?.length) return undefined;
     try {
       const refreshToken = await getGa4RefreshToken();
@@ -134,6 +225,36 @@ export async function GET(request: NextRequest) {
       }
 
       try {
+        const now = new Date();
+        const y = now.getUTCFullYear();
+        const m = now.getUTCMonth();
+        const lastMonthY = m === 0 ? y - 1 : y;
+        const lastMonthM = m === 0 ? 12 : m;
+        const lastMonthStart = `${lastMonthY}-${String(lastMonthM).padStart(2, "0")}-01`;
+        const sameMonthLastYearStart = `${lastMonthY - 1}-${String(lastMonthM).padStart(2, "0")}-01`;
+        const [lastMonthResult, sameMonthLastYearResult] = await Promise.all([
+          fetchGscSiteWideCtr({
+            accessToken,
+            siteUrl: gscSiteUrl,
+            startDate: lastMonthStart,
+            endDate: lastDayOfMonthUtc(lastMonthStart),
+          }),
+          fetchGscSiteWideCtr({
+            accessToken,
+            siteUrl: gscSiteUrl,
+            startDate: sameMonthLastYearStart,
+            endDate: lastDayOfMonthUtc(sameMonthLastYearStart),
+          }),
+        ]);
+        const curr = lastMonthResult?.clicks ?? 0;
+        const prev = sameMonthLastYearResult?.clicks ?? 0;
+        const changePercent = prev > 0 ? Math.round(((curr - prev) / prev) * 1000) / 10 : (curr > 0 ? 100 : 0);
+        payload.organicTrafficYoY = { lastMonth: curr, sameMonthLastYear: prev, changePercent, source: "gsc" };
+      } catch {
+        // keep existing organicTrafficYoY from GA4 if any
+      }
+
+      try {
         const { startDate, endDate } = gscDateRangeLastNDays(28);
         const raw = await fetchTopQueriesFromGsc({
           accessToken,
@@ -148,20 +269,42 @@ export async function GET(request: NextRequest) {
           payload.topKeywordsFromGsc = true;
         } else {
           const queries = top.map((r) => r.query);
-          const intentQueries = queries.filter((q) => q.trim().length >= 3);
 
-          const [volSettled, intentSettled, pagesSettled, kdSettled] = await Promise.allSettled([
-            fetchKeywordSearchVolumes(queries, locationCode, "en"),
-            fetchSearchIntent(intentQueries, "en"),
-            fetchGscBestPagePerQueryInRange({
-              accessToken,
-              siteUrl: gscSiteUrl,
-              startDate,
-              endDate,
-              queries,
-            }),
-            fetchKeywordDifficulties(queries, locationCode, "en"),
-          ]);
+          let volSettled: PromiseSettledResult<Map<string, { searchVolume: number | null; cpc: number | null }>>;
+          let intentSettled: PromiseSettledResult<Record<string, string>>;
+          let pagesSettled: PromiseSettledResult<Map<string, string>>;
+          let kdSettled: PromiseSettledResult<Map<string, number>>;
+
+          if (skipDataforseo) {
+            volSettled = { status: "fulfilled", value: new Map() };
+            intentSettled = { status: "fulfilled", value: {} };
+            kdSettled = { status: "fulfilled", value: new Map() };
+            try {
+              const pages = await fetchGscBestPagePerQueryInRange({
+                accessToken,
+                siteUrl: gscSiteUrl,
+                startDate,
+                endDate,
+                queries,
+              });
+              pagesSettled = { status: "fulfilled", value: pages };
+            } catch {
+              pagesSettled = { status: "rejected", reason: undefined };
+            }
+          } else {
+            [volSettled, intentSettled, pagesSettled, kdSettled] = await Promise.allSettled([
+              fetchKeywordSearchVolumes(queries, locationCode, "en"),
+              fetchSearchIntent(queries.filter((q) => q.trim().length >= 3), "en"),
+              fetchGscBestPagePerQueryInRange({
+                accessToken,
+                siteUrl: gscSiteUrl,
+                startDate,
+                endDate,
+                queries,
+              }),
+              fetchKeywordDifficulties(queries, locationCode, "en"),
+            ]);
+          }
           const volumeByKeyword =
             volSettled.status === "fulfilled"
               ? volSettled.value
@@ -348,7 +491,7 @@ export async function GET(request: NextRequest) {
 
     // Replace organicTraffic with GA4 Organic Search sessions when GA4 is connected.
     let ga4TrafficError: string | undefined = undefined;
-    let ga4OrganicTrafficYoY: DomainOverviewApiResponse["ga4OrganicTrafficYoY"] = null;
+    let organicTrafficYoY: DomainOverviewApiResponse["organicTrafficYoY"] = null;
     if (ga4PropertyId) {
       try {
         const refreshToken = await getGa4RefreshToken();
@@ -406,11 +549,7 @@ export async function GET(request: NextRequest) {
             const prev = sameMonthLastYear.sessions;
             const curr = lastMonth.sessions;
             const changePercent = prev > 0 ? Math.round(((curr - prev) / prev) * 1000) / 10 : (curr > 0 ? 100 : 0);
-            ga4OrganicTrafficYoY = {
-              lastMonthSessions: curr,
-              sameMonthLastYearSessions: prev,
-              changePercent,
-            };
+            organicTrafficYoY = { lastMonth: curr, sameMonthLastYear: prev, changePercent, source: "ga4" };
           }
         }
       } catch (gaErr) {
@@ -426,7 +565,7 @@ export async function GET(request: NextRequest) {
       domain,
       visibilityEtv: visibilityResult.visibilityEtv,
       organicCount: visibilityResult.organicCount,
-      ga4OrganicTrafficYoY,
+      organicTrafficYoY: organicTrafficYoY ?? undefined,
       history,
       historyError: visibilityResult.historyError || ga4TrafficError,
       keywordCount: keywordsResult.keywordCount,

@@ -1,0 +1,43 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  role         String   @default("client") // "admin" | "client"
+  createdAt    DateTime @default(now())
+  projects     UserProject[]
+}
+
+model Project {
+  id              String   @id
+  domain          String
+  name            String
+  locationCode    Int?
+  locationName    String?
+  ga4PropertyId   String?
+  ga4PropertyName String?
+  gscSiteUrl      String?
+  gscSiteLabel    String?
+  performanceNotes String? // JSON string of PerformanceNote[]
+  createdAt       DateTime @default(now())
+  users           UserProject[]
+}
+
+model UserProject {
+  userId    String
+  projectId String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  @@id([userId, projectId])
+}

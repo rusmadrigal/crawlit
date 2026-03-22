@@ -3,8 +3,9 @@
  * Key = domain (normalized) + locationCode so data is per country.
  * Only used on the server (API routes).
  * Longer TTL reduces DataForSEO API usage (fewer repeated calls).
+ * Note: On serverless (Vercel), each instance has its own memory; cache does not persist across instances.
  */
-const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
 
 type CacheEntry<T> = { data: T; expiresAt: number };
 

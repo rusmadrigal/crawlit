@@ -35,6 +35,7 @@ import { enUS } from "date-fns/locale";
 import { format, subDays, subMonths } from "date-fns";
 import "react-day-picker/style.css";
 import { useProjects } from "@/components/providers/projects-provider";
+import { useDataforseoPreference } from "@/components/providers/dataforseo-preference-provider";
 import { DEFAULT_LOCATION_CODE } from "@/lib/locations";
 import { cn } from "@/lib/utils";
 import type { PerformanceNote } from "@/types/project";
@@ -914,16 +915,17 @@ function SortableHeader({
 
 type HistoryPoint = { date: string; organicPages: number; organicTraffic: number; organicKeywords?: number };
 
-type Ga4OrganicTrafficYoY = {
-  lastMonthSessions: number;
-  sameMonthLastYearSessions: number;
+type OrganicTrafficYoY = {
+  lastMonth: number;
+  sameMonthLastYear: number;
   changePercent: number;
+  source: "ga4" | "gsc";
 };
 
 type OverviewData = {
   visibilityEtv?: number | null;
   organicCount?: number | null;
-  ga4OrganicTrafficYoY?: Ga4OrganicTrafficYoY | null;
+  organicTrafficYoY?: OrganicTrafficYoY | null;
   history?: HistoryPoint[];
   historyError?: string;
   keywordCount?: number;
@@ -964,11 +966,14 @@ const overviewActions = [
 
 export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
   const { projects, projectsLoaded, deleteProject, updateProject } = useProjects();
+  const { dataforseoApiEnabled } = useDataforseoPreference();
   const project = projects.find((p) => p.id === projectId);
   const [overviewData, setOverviewData] = useState<OverviewData>(null);
   const [overviewLoading, setOverviewLoading] = useState(false);
   const [overviewError, setOverviewError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshCooldownUntil, setRefreshCooldownUntil] = useState<number>(0);
+  const refreshCooldownRef = useRef(0);
   const [historyModalKeyword, setHistoryModalKeyword] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<"volume" | "position">("volume");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
@@ -996,21 +1001,28 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
   const locationCode = project?.locationCode ?? DEFAULT_LOCATION_CODE;
 
   const fetchOverview = useCallback(
-    async (refresh = false, granularityOverride?: "daily" | "monthly", timeRangeOverride?: "12m" | "2y") => {
+    async (refresh = false, granularityOverride?: "daily" | "monthly", timeRangeOverride?: "12m" | "2y", skipCooldown = false) => {
       if (!project?.domain) return;
+      if (refresh && !skipCooldown && Date.now() < refreshCooldownRef.current) return;
       const gran = granularityOverride ?? perfGranularity;
       const range = timeRangeOverride ?? perfTimeRange;
-      if (refresh) setRefreshing(true);
+      if (refresh && !skipCooldown) {
+        setRefreshing(true);
+        const until = Date.now() + 2 * 60 * 1000; // 2 min cooldown
+        refreshCooldownRef.current = until;
+        setRefreshCooldownUntil(until);
+      } else if (refresh) setRefreshing(true);
       else setOverviewLoading(true);
       setOverviewError(null);
       try {
         const gaParam = project?.ga4PropertyId ? `&ga4_property_id=${encodeURIComponent(project.ga4PropertyId)}` : "";
         const gscParam = project?.gscSiteUrl ? `&gsc_site_url=${encodeURIComponent(project.gscSiteUrl)}` : "";
         const granParam = gran === "daily" ? `&granularity=daily&days=${range === "2y" ? 365 : 90}` : "";
-        const url = `/api/domain-overview?domain=${encodeURIComponent(project.domain)}&location_code=${locationCode}${refresh ? "&refresh=1" : ""}${gaParam}${gscParam}${granParam}`;
+        const apiParam = !dataforseoApiEnabled ? "&dataforseo_enabled=0" : "";
+        const url = `/api/domain-overview?domain=${encodeURIComponent(project.domain)}&location_code=${locationCode}${refresh ? "&refresh=1" : ""}${apiParam}${gaParam}${gscParam}${granParam}`;
         const res = await fetch(url);
         const data = await res.json();
-        if (!res.ok) {
+        if (!res.ok || data.ok === false) {
           setOverviewError(data.error ?? "Failed to load");
           setOverviewData(null);
           return;
@@ -1018,7 +1030,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
         setOverviewData({
           visibilityEtv: data.visibilityEtv,
           organicCount: data.organicCount,
-          ga4OrganicTrafficYoY: data.ga4OrganicTrafficYoY ?? null,
+          organicTrafficYoY: data.organicTrafficYoY ?? null,
           history: data.history,
           historyError: data.historyError,
           keywordCount: data.keywordCount,
@@ -1036,7 +1048,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
         setRefreshing(false);
       }
     },
-    [project?.domain, project?.ga4PropertyId, project?.gscSiteUrl, locationCode, perfGranularity, perfTimeRange]
+    [project?.domain, project?.ga4PropertyId, project?.gscSiteUrl, locationCode, perfGranularity, perfTimeRange, dataforseoApiEnabled]
   );
 
 
@@ -1087,6 +1099,21 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
     if (project?.domain) fetchOverview();
     else setOverviewData(null);
   }, [project?.domain, fetchOverview]);
+
+  useEffect(() => {
+    if (refreshCooldownUntil <= 0) return;
+    const ms = refreshCooldownUntil - Date.now();
+    if (ms <= 0) {
+      refreshCooldownRef.current = 0;
+      setRefreshCooldownUntil(0);
+      return;
+    }
+    const t = setTimeout(() => {
+      refreshCooldownRef.current = 0;
+      setRefreshCooldownUntil(0);
+    }, ms);
+    return () => clearTimeout(t);
+  }, [refreshCooldownUntil]);
 
   useEffect(() => {
     if (!intentDropdownOpen) return;
@@ -1183,7 +1210,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                       ga4PropertyName: prop?.displayName || undefined,
                     });
                     // refresh overview to use GA4 traffic
-                    fetchOverview(true);
+                    fetchOverview(true, undefined, undefined, true);
                   }}
                   className="rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                   style={{ borderColor: "var(--border)", backgroundColor: "var(--input-bg)", color: "var(--foreground)" }}
@@ -1231,7 +1258,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                       gscSiteUrl: value || undefined,
                       gscSiteLabel: site?.siteUrl || undefined,
                     });
-                    fetchOverview(true);
+                    fetchOverview(true, undefined, undefined, true);
                   }}
                   className="max-w-[220px] rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                   style={{ borderColor: "var(--border)", backgroundColor: "var(--input-bg)", color: "var(--foreground)" }}
@@ -1251,12 +1278,13 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
             <button
               type="button"
               onClick={() => fetchOverview(true)}
-              disabled={isLoading || isRefreshing}
+              disabled={isLoading || isRefreshing || Date.now() < refreshCooldownUntil}
+              title={Date.now() < refreshCooldownUntil ? "Please wait 2 min between refreshes to reduce API cost" : undefined}
               className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors disabled:opacity-50"
               style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
             >
               <RefreshCw className={cn("size-4", isRefreshing && "animate-spin")} aria-hidden />
-              {isRefreshing ? "Updating…" : overviewData?.cached ? "Refresh data" : "Refresh"}
+              {isRefreshing ? "Updating…" : Date.now() < refreshCooldownUntil ? "Refresh (cooldown)" : overviewData?.cached ? "Refresh data" : "Refresh"}
             </button>
           )}
           {project && (
@@ -1301,45 +1329,45 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
               <Loader2 className="size-6 animate-spin" style={{ color: "var(--muted)" }} aria-hidden />
             ) : overviewError ? (
               <p className="text-sm" style={{ color: "var(--muted)" }}>{overviewError}</p>
-            ) : overviewData?.ga4OrganicTrafficYoY ? (
+            ) : overviewData?.organicTrafficYoY ? (
               <>
                 <div className="flex items-baseline gap-2">
                   <p className="text-2xl font-semibold tabular-nums" style={{ color: "var(--foreground)" }}>
-                    {overviewData.ga4OrganicTrafficYoY.lastMonthSessions >= 1000
-                      ? `${(overviewData.ga4OrganicTrafficYoY.lastMonthSessions / 1000).toFixed(1)}K`
-                      : overviewData.ga4OrganicTrafficYoY.lastMonthSessions.toLocaleString()}
+                    {overviewData.organicTrafficYoY.lastMonth >= 1000
+                      ? `${(overviewData.organicTrafficYoY.lastMonth / 1000).toFixed(1)}K`
+                      : overviewData.organicTrafficYoY.lastMonth.toLocaleString()}
                   </p>
                   <span
                     className="text-sm font-medium tabular-nums"
                     style={{
                       color:
-                        overviewData.ga4OrganicTrafficYoY.changePercent > 0
+                        overviewData.organicTrafficYoY.changePercent > 0
                           ? "#16a34a"
-                          : overviewData.ga4OrganicTrafficYoY.changePercent < 0
+                          : overviewData.organicTrafficYoY.changePercent < 0
                             ? "#dc2626"
                             : "var(--muted)",
                     }}
                   >
-                    {overviewData.ga4OrganicTrafficYoY.changePercent > 0 ? "+" : ""}
-                    {overviewData.ga4OrganicTrafficYoY.changePercent}%
+                    {overviewData.organicTrafficYoY.changePercent > 0 ? "+" : ""}
+                    {overviewData.organicTrafficYoY.changePercent}%
                   </span>
                 </div>
                 <p className="text-xs" style={{ color: "var(--muted)" }}>
-                  {overviewData.cached ? "Cached · " : ""}Last month vs same month last year (GA4)
+                  {overviewData.cached ? "Cached · " : ""}Last month vs same month last year ({overviewData.organicTrafficYoY.source === "gsc" ? "GSC clicks" : "GA4 sessions"})
                 </p>
               </>
-            ) : project?.ga4PropertyId ? (
+            ) : project?.ga4PropertyId || project?.gscSiteUrl ? (
               <>
                 <p className="text-2xl font-semibold tabular-nums" style={{ color: "var(--foreground)" }}>—</p>
                 <p className="text-xs" style={{ color: "var(--muted)" }}>
-                  No organic traffic data in GA4 for last 24 months
+                  No organic traffic data for last 24 months
                 </p>
               </>
             ) : (
               <>
                 <p className="text-2xl font-semibold tabular-nums" style={{ color: "var(--foreground)" }}>—</p>
                 <p className="text-xs" style={{ color: "var(--muted)" }}>
-                  Connect GA4 to see organic traffic YoY
+                  Connect GA4 or GSC to see organic traffic YoY
                 </p>
               </>
             )}
@@ -1509,7 +1537,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                             {
                               date: `${y}-${m}-01`,
                               organicPages: overviewData?.organicCount ?? 0,
-                              organicTraffic: overviewData?.ga4OrganicTrafficYoY?.lastMonthSessions ?? overviewData?.visibilityEtv ?? overviewData?.totalSearchVolume ?? 0,
+                              organicTraffic: overviewData?.organicTrafficYoY?.lastMonth ?? overviewData?.visibilityEtv ?? overviewData?.totalSearchVolume ?? 0,
                             },
                           ];
                         })()) as HistoryPoint[];
@@ -1538,7 +1566,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
               const rawHistory = overviewData.history && overviewData.history.length > 0
                 ? overviewData.history
                 : null;
-              const fallbackPoint: HistoryPoint[] = !rawHistory && (overviewData.organicCount != null || overviewData.ga4OrganicTrafficYoY != null || overviewData.visibilityEtv != null || (overviewData.totalSearchVolume != null && overviewData.totalSearchVolume > 0))
+              const fallbackPoint: HistoryPoint[] = !rawHistory && (overviewData.organicCount != null || overviewData.organicTrafficYoY != null || overviewData.visibilityEtv != null || (overviewData.totalSearchVolume != null && overviewData.totalSearchVolume > 0))
                 ? (() => {
                     const now = new Date();
                     const y = now.getFullYear();
@@ -1547,7 +1575,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                       {
                         date: `${y}-${m}-01`,
                         organicPages: overviewData.organicCount ?? 0,
-                        organicTraffic: Math.round(Number(overviewData.ga4OrganicTrafficYoY?.lastMonthSessions ?? overviewData.visibilityEtv ?? overviewData.totalSearchVolume ?? 0)),
+                        organicTraffic: Math.round(Number(overviewData.organicTrafficYoY?.lastMonth ?? overviewData.visibilityEtv ?? overviewData.totalSearchVolume ?? 0)),
                         organicKeywords: overviewData.keywordCount ?? undefined,
                       },
                     ];

@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
+import { useDataforseoPreference } from "@/components/providers/dataforseo-preference-provider";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Search, Loader2, AlertCircle, TrendingUp, PieChart } from "lucide-react";
-import Link from "next/link";
 import {
   LineChart,
   Line,
@@ -79,6 +80,7 @@ export function KeywordResearchForm() {
   const [error, setError] = useState<string | null>(null);
   const [items, setItems] = useState<KeywordItem[]>([]);
   const [apiConfigured, setApiConfigured] = useState<boolean | null>(null);
+  const { dataforseoApiEnabled } = useDataforseoPreference();
 
   async function checkConfig() {
     try {
@@ -125,6 +127,34 @@ export function KeywordResearchForm() {
             style={{ borderColor: "var(--border)", backgroundColor: "var(--card)" }}
           >
             Setup guide
+          </Link>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!dataforseoApiEnabled) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Search className="size-5" />
+            Search keywords
+          </CardTitle>
+          <CardDescription>
+            DataForSEO API requests are disabled in Settings.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <p className="mb-4 text-sm" style={{ color: "var(--muted)" }}>
+            Enable &quot;Allow API requests&quot; in Settings to run keyword research.
+          </p>
+          <Link
+            href="/config"
+            className="inline-flex h-9 items-center justify-center rounded-lg border px-4 text-sm font-medium shadow-sm transition-colors hover:opacity-90"
+            style={{ borderColor: "var(--border)", backgroundColor: "var(--card)" }}
+          >
+            Open Settings
           </Link>
         </CardContent>
       </Card>

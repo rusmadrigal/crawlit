@@ -13,8 +13,9 @@ Each **full** overview request can trigger **3–4** DataForSEO calls (keywords 
 
 ## Optimizations in place
 
-1. **Monthly cache (1 hour)**  
-   Overview data is cached in memory for **1 hour** per domain + location. Repeated requests for the same project within that window are served from cache and do **not** call DataForSEO.
+1. **Monthly cache (4 hours)**  
+   Overview data is cached in memory for **4 hours** per domain + location. Repeated requests for the same project within that window are served from cache and do **not** call DataForSEO.  
+   **Note:** On serverless (Vercel), each instance has its own memory; cache does not persist across instances or cold starts.
 
 2. **Daily view reuses monthly cache**  
    When you switch the Performance chart to **Daily**, the app:
@@ -28,12 +29,19 @@ Each **full** overview request can trigger **3–4** DataForSEO calls (keywords 
 4. **Intent in one batch**  
    Search intent is requested in a single batch (up to 100 keywords) when ranked keywords lack intent, instead of one call per keyword.
 
+5. **Refresh cooldown (2 minutes)**  
+   The Refresh button is disabled for 2 minutes after use to prevent accidental repeated DataForSEO calls.
+
+6. **Reduced ranked keywords limit**  
+   Ranked keywords are limited to 50 per request (was 100) to lower cost per overview.
+
 ## How to reduce cost further
 
 - Use **Refresh** only when you need fresh data; normal navigation uses cache.
 - Prefer **Monthly** view when possible; switch to **Daily** when you need it (daily uses cache + GA4 only once monthly data exists).
 - **Keyword research** runs only when you submit the form; it is not automatic.
+- For production with high traffic, consider a **persistent cache** (e.g. Redis/Upstash) so cache survives serverless cold starts.
 
 ## Cache TTL
 
-Default overview cache TTL is **60 minutes** (`overview-cache.ts`). You can change `CACHE_TTL_MS` to balance freshness vs. API usage (e.g. 30 min for fresher data, 2 hours for fewer calls).
+Default overview cache TTL is **4 hours** (`overview-cache.ts`). You can change `CACHE_TTL_MS` to balance freshness vs. API usage (e.g. 2 hours for fewer calls, 6 hours for minimal usage).

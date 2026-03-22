@@ -3,16 +3,50 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useProjects } from "@/components/providers/projects-provider";
+import { useAuth } from "@/components/providers/auth-provider";
 import { NewProjectForm } from "@/components/projects/new-project-form";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Globe, Loader2, Plus, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Globe, Loader2, Plus, Trash2, LogOut, Settings, SlidersHorizontal } from "lucide-react";
 
 export function ProjectsDashboard() {
   const { projects, projectsLoaded, deleteProject } = useProjects();
+  const { user, logout } = useAuth();
   const [showNewForm, setShowNewForm] = useState(false);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-8 px-4 py-12">
+    <div className="min-h-screen" style={{ backgroundColor: "var(--background)" }}>
+      <header className="flex items-center justify-between border-b px-4 py-3" style={{ borderColor: "var(--border)" }}>
+        <Link href="/" className="font-semibold" style={{ color: "var(--foreground)" }}>
+          CrawliT
+        </Link>
+        <div className="flex items-center gap-2">
+          {user && (
+            <>
+              <span className="text-sm" style={{ color: "var(--muted)" }}>{user.username}</span>
+              <Link href="/config">
+                <Button variant="ghost" size="sm" className="gap-1">
+                  <SlidersHorizontal className="size-4" />
+                  Settings
+                </Button>
+              </Link>
+              {user.role === "admin" && (
+                <Link href="/admin">
+                  <Button variant="ghost" size="sm" className="gap-1">
+                    <Settings className="size-4" />
+                    Admin
+                  </Button>
+                </Link>
+              )}
+              <Button variant="ghost" size="sm" onClick={logout} className="gap-1">
+                <LogOut className="size-4" />
+                Log out
+              </Button>
+            </>
+          )}
+        </div>
+      </header>
+      <div className="mx-auto max-w-3xl space-y-8 px-4 py-12">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight" style={{ color: "var(--foreground)" }}>
           Projects
@@ -21,7 +55,7 @@ export function ProjectsDashboard() {
           Each project tracks one domain. Create a project to start keyword research and SEO tools for that domain.
         </p>
         <p className="mt-0.5 text-xs" style={{ color: "var(--muted)", opacity: 0.9 }}>
-          Projects are stored in your browser. Clearing site data, using incognito, or switching browsers will reset them.
+          Projects are stored in your account. Only you and admins can see your projects.
         </p>
       </div>
 
@@ -68,10 +102,10 @@ export function ProjectsDashboard() {
               </Link>
               <button
                 type="button"
-                onClick={(e) => {
+                onClick={async (e) => {
                   e.preventDefault();
                   if (window.confirm(`Delete project "${project.name}"? This cannot be undone.`)) {
-                    deleteProject(project.id);
+                    await deleteProject(project.id);
                   }
                 }}
                 className="absolute right-3 top-3 rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-red-500/10 hover:text-red-600"
@@ -111,6 +145,7 @@ export function ProjectsDashboard() {
           </CardContent>
         </Card>
       )}
+      </div>
     </div>
   );
 }

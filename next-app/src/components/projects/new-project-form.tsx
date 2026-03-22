@@ -53,7 +53,7 @@ export function NewProjectForm({ onSuccess, onCancel, showCancel, submitLabel = 
     }
   }, [countryOpen]);
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     const raw = domain.trim();
@@ -68,13 +68,12 @@ export function NewProjectForm({ onSuccess, onCancel, showCancel, submitLabel = 
     }
     setLoading(true);
     try {
-      const project = addProject(
+      const project = await addProject(
         normalized,
         name.trim() || undefined,
         locationCode,
         selectedLocation?.locationName
       );
-      refreshProjects();
       onSuccess?.();
       router.push(`/p/${project.id}`);
     } catch (err) {

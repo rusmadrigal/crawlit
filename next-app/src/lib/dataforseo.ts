@@ -208,7 +208,7 @@ export async function fetchRankedKeywords(
   domain: string,
   locationCode: number = 2840,
   languageCode: string = "en",
-  limit: number = 100
+  limit: number = 50
 ): Promise<RankedKeywordRow[]> {
   const apiKey = process.env.DATAFORSEO_API_KEY?.trim();
   if (!apiKey) throw new Error("DATAFORSEO_API_KEY is not set.");
