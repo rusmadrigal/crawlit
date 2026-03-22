@@ -8,7 +8,11 @@ import {
   fetchRankedKeywords,
   fetchSearchIntent,
 } from "@/lib/dataforseo";
-import { getOverviewCached, setOverviewCached, invalidateOverviewCache } from "@/lib/overview-cache";
+import {
+  getOverviewCachedAsync,
+  setOverviewCachedAsync,
+  invalidateOverviewCacheAsync,
+} from "@/lib/overview-cache";
 import { DEFAULT_LOCATION_CODE } from "@/lib/locations";
 import { fetchGa4OrganicSessionsDaily, fetchGa4OrganicSessionsMonthly, getAccessTokenFromRefreshToken, getGa4RefreshToken } from "@/lib/ga4";
 import {
@@ -92,7 +96,7 @@ export async function GET(request: NextRequest) {
 
   // When DataForSEO API is disabled (client preference): use cache or build from GSC/GA4 only.
   if (!dataforseoEnabled) {
-    const cached = getOverviewCached<DomainOverviewApiResponse>(domain, locationCode);
+    const cached = await getOverviewCachedAsync<DomainOverviewApiResponse>(domain, locationCode);
     if (cached && cached.keywordCount !== undefined) {
       const payload: DomainOverviewApiResponse = {
         ...cached,
@@ -179,11 +183,11 @@ export async function GET(request: NextRequest) {
   }
 
   if (refresh) {
-    invalidateOverviewCache(domain, locationCode);
+    await invalidateOverviewCacheAsync(domain, locationCode);
   }
 
   // Always try monthly cache first: for daily view we reuse it and only fetch GA4 (saves DataForSEO calls).
-  const cachedMonthly = getOverviewCached<DomainOverviewApiResponse>(domain, locationCode);
+  const cachedMonthly = await getOverviewCachedAsync<DomainOverviewApiResponse>(domain, locationCode);
   const useCacheForResponse = granularity === "monthly" && !refresh && cachedMonthly?.keywordCount !== undefined;
 
   if (useCacheForResponse && cachedMonthly && !gscSiteUrl) {
@@ -373,7 +377,8 @@ export async function GET(request: NextRequest) {
       ...cachedMonthly,
       history: cachedMonthly.history ? cachedMonthly.history.map((h) => ({ ...h })) : undefined,
     };
-    const gscErr = await tryApplySearchConsole(payload, false);
+    // skipDataforseo=true: cache already has volume/KD/intent; only refresh GSC position/URL
+    const gscErr = await tryApplySearchConsole(payload, true);
     if (gscErr) {
       payload.historyError = [payload.historyError, gscErr].filter(Boolean).join(" ");
     }
@@ -581,14 +586,18 @@ export async function GET(request: NextRequest) {
       topKeywords: topKeywords ?? [],
       cached: false,
     };
-    // After any full fetch, cache monthly data so daily view can reuse it (saves DataForSEO calls).
-    // Clone before caching so Search Console merges below do not mutate the cached snapshot.
+    const gscErr = await tryApplySearchConsole(payload, false);
+    if (gscErr) {
+      payload.historyError = [payload.historyError, gscErr].filter(Boolean).join(" ");
+    }
+    // Cache AFTER GSC enrichment so cached data includes volume/KD/intent + GSC position/URL.
+    // Persists to DB so it survives when DataForSEO API is turned off or serverless cold starts.
     if (!usedCachedForDaily) {
       const toCache: DomainOverviewApiResponse =
         granularity === "monthly"
-          ? payload
+          ? structuredClone(payload)
           : {
-              ...payload,
+              ...structuredClone(payload),
               history: (() => {
                 const h = (visibilityResult.history ?? []) as NonNullable<DomainOverviewApiResponse["history"]>;
                 if (h.length > 0 && keywordsResult.keywordCount != null && !gscSiteUrl) {
@@ -600,11 +609,7 @@ export async function GET(request: NextRequest) {
                 return h;
               })(),
             };
-      setOverviewCached(domain, structuredClone(toCache), undefined, locationCode);
-    }
-    const gscErr = await tryApplySearchConsole(payload, false);
-    if (gscErr) {
-      payload.historyError = [payload.historyError, gscErr].filter(Boolean).join(" ");
+      await setOverviewCachedAsync(domain, toCache, undefined, locationCode);
     }
     return Response.json(payload);
   } catch (err) {

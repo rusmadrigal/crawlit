@@ -42,3 +42,17 @@ model UserProject {
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   @@id([userId, projectId])
 }
+
+/// Persistent cache for domain overview (DataForSEO volume/KD/intent). Survives serverless cold starts.
+model OverviewCache {
+  id           String   @id @default(cuid())
+  domainKey    String   // normalized domain + locationCode for lookup
+  domain       String
+  locationCode Int
+  data         String   // JSON of DomainOverviewApiResponse
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  @@unique([domainKey])
+  @@index([expiresAt])
+}

@@ -982,6 +982,10 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
   const [showOrganicKeywords, setShowOrganicKeywords] = useState(false);
   const [perfTimeRange, setPerfTimeRange] = useState<"12m" | "2y">("12m");
   const [perfGranularity, setPerfGranularity] = useState<"daily" | "monthly">("daily");
+  const perfGranularityRef = useRef(perfGranularity);
+  const perfTimeRangeRef = useRef(perfTimeRange);
+  perfGranularityRef.current = perfGranularity;
+  perfTimeRangeRef.current = perfTimeRange;
   const [intentFilter, setIntentFilter] = useState<string[]>([]);
   const [intentDropdownOpen, setIntentDropdownOpen] = useState(false);
   const intentDropdownRef = useRef<HTMLDivElement>(null);
@@ -1004,8 +1008,8 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
     async (refresh = false, granularityOverride?: "daily" | "monthly", timeRangeOverride?: "12m" | "2y", skipCooldown = false) => {
       if (!project?.domain) return;
       if (refresh && !skipCooldown && Date.now() < refreshCooldownRef.current) return;
-      const gran = granularityOverride ?? perfGranularity;
-      const range = timeRangeOverride ?? perfTimeRange;
+      const gran = granularityOverride ?? perfGranularityRef.current;
+      const range = timeRangeOverride ?? perfTimeRangeRef.current;
       if (refresh && !skipCooldown) {
         setRefreshing(true);
         const until = Date.now() + 2 * 60 * 1000; // 2 min cooldown
@@ -1048,7 +1052,7 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
         setRefreshing(false);
       }
     },
-    [project?.domain, project?.ga4PropertyId, project?.gscSiteUrl, locationCode, perfGranularity, perfTimeRange, dataforseoApiEnabled]
+    [project?.domain, project?.ga4PropertyId, project?.gscSiteUrl, locationCode, dataforseoApiEnabled]
   );
 
 
@@ -1514,6 +1518,21 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                     <option value="daily">Daily</option>
                   </select>
                 </div>
+                {overviewData.history &&
+                  overviewData.history.length > 0 &&
+                  (overviewData.history.length > 31) !== (perfGranularity === "daily") && (
+                    <span className="text-xs" style={{ color: "var(--muted)" }}>
+                      Showing {overviewData.history.length > 31 ? "daily" : "monthly"} data.{" "}
+                      <button
+                        type="button"
+                        onClick={() => fetchOverview(true)}
+                        className="font-medium underline hover:no-underline"
+                      >
+                        Refresh
+                      </button>{" "}
+                      for {perfGranularity} view.
+                    </span>
+                  )}
                 <button
                   type="button"
                   onClick={() => setNotesOpen(true)}
@@ -1588,7 +1607,8 @@ export function ProjectOverviewDashboard({ projectId }: { projectId: string }) {
                   organicKeywords: p.organicKeywords ?? overviewData.keywordCount ?? undefined,
                 }));
               }
-              const isDaily = perfGranularity === "daily" && chartData.length > 0 && chartData[0]?.date?.length === 10;
+              const dataIsDaily = chartData.length > 31;
+              const isDaily = perfGranularity === "daily" && dataIsDaily;
               const formatDate = (d: string) => {
                 const parts = d.split("-");
                 const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
